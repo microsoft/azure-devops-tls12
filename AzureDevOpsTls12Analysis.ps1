@@ -4,50 +4,113 @@
 <#
 .Synopsis
     Analysis of TLS 1.2 compatibility for Azure DevOps.
+
+    Version 2022-03-19
+
 .Description
     This script aims to help customers in preparation to deprecation of TLS 1.0 and TLS 1.1 protocols and weak cipher suites by Azure DevOps Services.
-    The script is read-only, does not execute any mitigations.
+    The script performs read-only operations, does not execute any mitigations.
     The script runs on Windows client / server OS and detects well-known causes of TLS 1.2 or cipher suite incompatibilities.
+
+    Lowest OS version where this script has been tested on is Windows Server 2012 R2.
 #>
 
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
 function Write-Info { param($str) Write-Host -ForegroundColor yellow $str } 
+function Write-Break { Write-Host -ForegroundColor Gray "********************************************************************************" }
+function Write-Title 
+{ 
+    param($str) 
+    Write-Host -ForegroundColor blue ("=" * ($str.Length + 4))
+    Write-Host -ForegroundColor blue "| $str |" 
+    Write-Host -ForegroundColor blue ("=" * ($str.Length + 4))
+} 
+
+function TryToSecureConnect
+{
+    param($connectHost)
+    $client = New-Object Net.Sockets.TcpClient
+    try 
+    {
+        try 
+        {
+            $client.Connect($connectHost, 443) # if we fail here, it is not SSL/TLS issue
+        } 
+        catch # case of network/DNS error (no TLS problem)
+        {
+            return $null
+        }
+        $stream = New-Object Net.Security.SslStream $client.GetStream(), $true, ([System.Net.Security.RemoteCertificateValidationCallback]{ $true })
+        $remoteEndpoint = $client.Client.RemoteEndPoint
+        try
+        {
+            $stream.AuthenticateAsClient("")
+            return ($true, $remoteEndpoint)
+        }    
+        catch [System.IO.IOException] # case of failed TLS negotation
+        {
+            return ($false, $remoteEndpoint)
+        }         
+    }
+    finally 
+    {
+        $stream.Dispose()
+        $client.Dispose()
+    }    
+}
+
 
 function Probe
 {
-    param ($uri)
-    Write-Info "$uri --> ping"
-    $domain = ([System.Uri]$uri).Host
-    ping $domain
-    Write-Info "$uri --> https"
-    $status = (Invoke-WebRequest -Uri $uri).StatusCode
-    if ($status -lt 500) {Write-OK "$uri --> OK" } else { Write-nonOK "$uri --> Unexpected 50x response" }
+    param ($domain, $tlsSetupDesc)
+    
+    Write-Info "Probing: $domain"
+    
+    ($success, $remoteAddress) = TryToSecureConnect $domain
+    switch ($success)
+    {
+        $null { Write-nonOK "Failed to reach the destination. This is connectivity or DNS problem, *not* TLS incompatibility." }
+        $true { Write-OK "Probe succeeded. Connection negotiated successfully to $remoteAddress" }
+        $false { Write-nonOK "Probe failed when TLS-negotiating to $remoteAddress. This may be TLS compatibility issue."}
+    } 
+
+    Write-Break    
 }
 
+Write-Title "Probing Azure DevOps sites"
+Probe "status.dev.azure.com" # This domain requires TLS 1.2 with strong cipher suites.
 
-Write-Info "Probing Azure DevOps site on TLS 1.2"
-Probe "https://status.dev.azure.com/"
-Write-Info "Probing other Azure DevOps sites (on TLS 1.0+ or TLS 1.2 depending on actual state of Legacy TLS deprecation)"
-Probe "https://dev.azure.com/tfspfcusctest/"
-Probe "https://marketplace.visualstudio.com/"
+# We're skipping probes to other Azure DevOps domains, because their TLS setting has not been fixed yet:
+# - IPv6 has been switched to TLS 1.2 with strong cipher suites, 
+# - IPv4 is on TLS 1.0+ or TLS 1.2 with strong cipher suites depending on rollout of Legacy TLS deprecation.
+# Therefore, the probe result is function of current date, DNS resolution choice of IPv4 or IPv6 and actual TLS compatibility of the client.
+#
+# Probe "dev.azure.com"
+# Probe "whatever.visualstudio.com"
 
-
-Write-Info "Starting analysis of TLS 1.2 compatibility..."
+Write-Title "Analysis of TLS 1.2 compatibility"
 $PSversionTable
 
-$netFwkVersion = "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"
-if (Test-Path -Path $netFwkVersion)
+$netFwkVersionPath = "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"
+# Mapping table from the above Release number to .NET version here: 
+# https://docs.microsoft.com/en-us/dotnet/framework/migration-guide/how-to-determine-which-versions-are-installed#detect-net-framework-45-and-later-versions
+if (Test-Path -Path $netFwkVersionPath)
 {
-    $fwkRelease = (Get-ItemProperty -Path $netFwkVersion).Release
-    Write-Info "Installed .NET Framework release: $fwkRelease"
-    # Mapping table from the above Release number to .NET version here: 
-    # https://docs.microsoft.com/en-us/dotnet/framework/migration-guide/how-to-determine-which-versions-are-installed#detect-net-framework-45-and-later-versions
+    $fwkRelease = (Get-ItemProperty -Path $netFwkVersionPath).Release
+    if ($fwkRelease -lt 460000)
+    {
+        Write-nonOK ".NET Framework 4.7+ not installed (release $fwkRelease). This may cause TLS-compatibility issues to .NET applications."
+    }
+    else
+    {
+        Write-OK ".NET Framework release is 4.7+ (release $fwkRelease)"
+    }
 }
-else 
+else
 {
-    Write-nonOK ".NET Framework 4.5+ does not seem to be installed"
+    Write-nonOK ".NET Framework 4.7+ not installed (version below 4.5 seem to be installed)"
 }
 
 # List of TLS 1.2 cipher suites required by Azure DevOps
@@ -80,7 +143,7 @@ function GetEnabledCipherSuites
         $csArray = (Get-TlsCipherSuite -Name $csItem)
         if ($csArray.Count -gt 0)
         {
-            Write-Info "Cipher suite enabled: $csItem"
+            Write-Detail "Cipher suite enabled: $csItem"
             $result = $true
         }
     }
@@ -95,11 +158,11 @@ if ($PSversionTable.BuildVersion.Major -ge 10)
     }
     elseif ((GetEnabledCipherSuites $otherTls12CipherSuites)) 
     {
-        Write-nonOK "None of the TLS 1.2 cipher suites required by Azure DevOps enalbed on the machine, but there are other TLS 1.2 cipher suites enabled."
+        Write-nonOK "ISSUE FOUND: TLS 1.2 is supported but none of the TLS 1.2 cipher suites required by Azure DevOps are enalbed on the machine."
     }
     else 
     { 
-        Write-nonOK "No TLS 1.2 cipher suite found to be enabled on the machine" 
+        Write-nonOK "ISSUE FOUND: TLS 1.2 does not seem to be supported (no TLS 1.2 cipher suites enabled)" 
     }
 }
 else
@@ -132,8 +195,15 @@ $localCiphersPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Cryptography\Configu
 $allowedCipherSuitesList = CheckFunctionsList $localCiphersPath $requiredTls12CipherSuites
 if ($allowedCipherSuitesList -ne $null -and ($allowedCipherSuitesList.Count -lt $requiredTls12CipherSuites.Count))
 {
-    Write-nonOK "Some of the TLS 1.2 cipher suites required by Azure DevOps are not supported/enabled locally."
-    Write-Info "Allowed cipher suites: {$allowedCipherSuitesList}"
+    if ($allowedCipherSuitesList.Count -eq 0) 
+    {
+        Write-nonOK "ISSUE FOUND: All TLS 1.2 cipher suites required by Azure DevOps are not supported/enabled locally."
+    }
+    else 
+    {
+        Write-nonOK "POTENTIAL ISSUE FOUND: Some of TLS 1.2 cipher suites required by Azure DevOps are not supported/enabled locally."
+        Write-Detail "Allowed cipher suites: {$allowedCipherSuitesList}"
+    }
 }
 
 # Source: https://docs.microsoft.com/en-us/skypeforbusiness/manage/topology/disable-tls-1.0-1.1
@@ -141,16 +211,23 @@ $gpolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL
 $allowedCipherSuitesList = CheckFunctionsList $gpolicyPath $requiredTls12CipherSuites
 if ($allowedCipherSuitesList -ne $null -and ($allowedCipherSuitesList.Count -lt $requiredTls12CipherSuites.Count))
 {
-    Write-nonOK "Some of the TLS 1.2 cipher suites required by Azure DevOps are disabled by group policy"
-    Write-Info "Allowed cipher suites: {$allowedCipherSuitesList}"
+    if ($allowedCipherSuitesList.Count -eq 0) 
+    {
+        Write-nonOK "ISSUE FOUND: All TLS 1.2 cipher suites required by Azure DevOps are disabled by group policy"
+    }
+    else
+    {
+        Write-nonOK "POTENTIAL ISSUE FOUND: Some of the TLS 1.2 cipher suites required by Azure DevOps are disabled (maybe by group policy)"
+        Write-Detail "Allowed cipher suites: {$allowedCipherSuitesList}"
+    }
 }
 
 # Source: https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs
 $tls12ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client"
 if (Test-Path -Path $tls12ClientPath)
 {
-    if ((Get-ItemProperty -Path $tls12ClientPath).Enabled -eq 0) { Write-nonOK "Client TLS 1.2 disabled" }
-    if ((Get-ItemProperty -Path $tls12ClientPath).DisabledByDefault -ne 0) { Write-nonOK "Client TLS 1.2 disabled by default" }
+    if ((Get-ItemProperty -Path $tls12ClientPath).Enabled -eq 0) { Write-nonOK "ISSUE FOUND: Client TLS 1.2 protocol usage disabled" }
+    if ((Get-ItemProperty -Path $tls12ClientPath).DisabledByDefault -ne 0) { Write-nonOK "ISSUE FOUND: Client TLS 1.2 protocol usage disabled by default" }
 }
 
 function CheckRegistryDefined
@@ -164,7 +241,7 @@ function CheckStrongCrypto
 {
     param($path, $desc)
     $isStrongCryptoEnforced = 
-        (($propertyObject = (CheckRegistryDefined $fwkPath40)) -and
+        (($propertyObject = (CheckRegistryDefined $path)) -and
         (($propertyObject.SchUseStrongCrypto -ne $null) -and ($propertyObject.SchUseStrongCrypto -ne 0)) -and
         (($propertyObject.SystemDefaultTlsVersions -ne $null) -and ($propertyObject.SystemDefaultTlsVersions -ne 0)))
 
