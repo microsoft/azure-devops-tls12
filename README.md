@@ -1,14 +1,28 @@
-# Project
+# Azure DevOps Legacy TLS Deprecation readiness checker
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+Azure DevOps Services (as many other Microsoft services) is undergoing transition to deprecate transport protocols TLS 1.0, TLS 1.1 and some cipher suites which are considered weak.
 
-As the maintainer of this project, please make a few updates:
+See announcement from Azure DevOps team here: https://devblogs.microsoft.com/devops/deprecating-weak-cryptographic-standards-tls-1-0-and-1-1-in-azure-devops-services/
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+The purpose of this project is to simplify the task of preparation for the transition.
+We gathered most frequently seen TLS-compatibility issues reported by our customers and made a script which detects them and points the user towards the mitigation.
+
+
+To run the analysis: 
+```ps
+AzureDevOpsTls12Analysis.ps1
+````
+Run in Powershell version 4 or higher. Windows-only, the script has been tested on Windows Server 2012 R2 and above.
+
+What the script does:
+    - performs a probe by opening a test connection to one of Azure DevOps Services sites which have already fully migrated to TLS 1.2 with strong cipher suites.
+    - performs an analysis of OS-level issues by looking at selected Windows registry spots known to be sources of TLS-incompatibilities and misconfigurations. OS-level issues are shared by all the software running on the machine that uses OS's HTTPS/TLS stack.
+    - performs an analysis of .NET Framework configuration in Windows registry that can be used to make old .NET applications (applications built against old versions of .NET Framework) to leverage all OS's TLS capabilities. 
+
+What the script does not:
+    - The script does not need elevated permissions to run.
+    - The script does not execute any mitigations that would make your computer TLS 1.2-ready.
+    - The script cannot say if specific app will have TLS issues. There are apps which have TLS/SSL version hard-code or configured. 
 
 ## Contributing
 
