@@ -23,15 +23,16 @@
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
+function Write-Warning { param($str) Write-Host -ForegroundColor magenta $str } 
 function Write-Info { param($str) Write-Host -ForegroundColor yellow $str } 
 function Write-Detail { param($str) Write-Host -ForegroundColor gray $str } 
 function Write-Break { Write-Host -ForegroundColor Gray "********************************************************************************" }
 function Write-Title 
 { 
     param($str) 
-    Write-Host -ForegroundColor yellow ("=" * ($str.Length + 4))
-    Write-Host -ForegroundColor yellow "| $str |" 
-    Write-Host -ForegroundColor yellow ("=" * ($str.Length + 4))
+    Write-Host -ForegroundColor Yellow ("=" * ($str.Length + 4))
+    Write-Host -ForegroundColor Yellow "| $str |" 
+    Write-Host -ForegroundColor Yellow ("=" * ($str.Length + 4))
 } 
 
 #
@@ -64,10 +65,14 @@ function TryToSecureConnect
             $stream.AuthenticateAsClient($connectHost, $null, $askedProtocols, $false)
             return ($true, $remoteEndpoint, $null)
         }
-        catch [System.IO.IOException] # case of failed TLS negotation
+        catch [System.IO.IOException],[System.ComponentModel.Win32Exception] # case of failed TLS negotation
         {
+            # Seen exceptions here:
+            #   Error: The client and server cannot communicate, because they do not possess a common algorithm.
+            #   Error: Unable to read data from the transport connection: An existing connection was forcibly closed by the remote host.
+
             return ($false, $remoteEndpoint, $_)
-        }
+        }        
         finally {$stream.Dispose()}
     }
     finally 
@@ -194,26 +199,30 @@ $tls12ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCH
 if (Test-Path -Path $tls12ClientPath)
 {
     $clientCheckOK = $true 
-    if ($value = (Get-ItemProperty -Path $tls12ClientPath).Enabled -and $value -eq 0)
-    {
-        Write-nonOK "ISSUE FOUND: Client TLS 1.2 protocol usage not enabled"
-        Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs" 
-        Write-nonOK "    [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client] 'Enabled'=dword:00000001"
+    $mitigations = @()
+    if ((($value = (Get-ItemProperty -Path $tls12ClientPath).Enabled) -ne $null) -and ($value -eq 0))
+    {   
+        $mitigations = $mitigations + "[$tls12ClientPath] 'Enabled'=dword:1"
         $clientCheckOK = $false
     }
-    if ($value = (Get-ItemProperty -Path $tls12ClientPath).DisabledByDefault -and $value -ne 0) 
+    if ((($value = (Get-ItemProperty -Path $tls12ClientPath).DisabledByDefault) -ne $null) -and ($value -ne 0)) 
     { 
-        Write-nonOK "ISSUE FOUND: Client TLS 1.2 protocol usage disabled by default"
-        Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs" 
-        Write-nonOK "    [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client] 'DisabledByDefault'=dword:00000000"
+        $mitigations = $mitigations + "[$tls12ClientPath] 'DisabledByDefault'=dword:0"
         $clientCheckOK = $false
-     }     
-     if ($clientCheckOK)
-     {
-        Write-OK "TLS 1.2 client usage enabled."
-     }
+    }
+
+    if ($clientCheckOK)
+    {
+       Write-OK "TLS 1.2 client usage enabled."
+    }
+    else
+    {
+       Write-nonOK "ISSUE FOUND: TLS 1.2 protocol client usage disabled"
+       Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs" 
+       $mitigations | & { process { Write-nonOK("    $_") } } 
+    }
      
-     Write-Break
+    Write-Break
 }
 
 function CheckFunctionsList
@@ -260,15 +269,14 @@ if ($allowedCipherSuitesIntersect.Count -eq 0)
     { 
         Write-nonOK "This OS does not enable expected TLS 1.2 cipher suites which were either manually disabled or OS is not properly updated."
         Write-nonOK "MITIGATION: update OS, then per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs"
-        $missingCipherSuitesPerLocalConsideringOS | & { process { Write-nonOK ("    [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002] 'Functions' append line: " + $_) } }
-
+        $missingCipherSuitesPerLocalConsideringOS | & { process { Write-nonOK ("    [$localCiphersPath] 'Functions' append line: " + $_) } }
     }
     if ($disabledCipherSuitesListPerGroupPolicy.Count -gt 0)
     {
         Write-nonOK "Cipher suites are supported by the OS but explicitly disabled (probably by group policy)"
         Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/skypeforbusiness/manage/topology/disable-tls-1.0-1.1"
         Write-nonOK "    If the below registry change does not work (or works temporarily, ask your domain admin to enable cipher suites by GP)"
-        $disabledCipherSuitesListPerGroupPolicy | & { process { Write-nonOK ("    [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002] 'Functions' append lines: " + $_) } }
+        $disabledCipherSuitesListPerGroupPolicy | & { process { Write-nonOK ("    [$gpolicyPath] 'Functions' append lines: " + $_) } }
     }
 }
 else
@@ -305,8 +313,6 @@ else
     Write-nonOK ".NET Framework 4.7+ not installed (version below 4.5 seem to be installed)"
 }
 
-
-
 function CheckRegistryDefined
 {
     param($path, $property)
@@ -328,12 +334,21 @@ function CheckStrongCrypto
     }
     else
     {
-        Write-Info "TLS 1.2 not enforced for applications targetting $desc"
+        Write-Warning "Warning: TLS 1.2 not enforced for applications targetting $desc"
+        return "[$path] 'SchUseStrongCrypto'=dword:1, 'SystemDefaultTlsVersions'=dword:1"
     }
 }
 
-# Source: https://docs.microsoft.com/en-us/mem/configmgr/core/plan-design/security/enable-tls-1-2-client
-CheckStrongCrypto "HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319" ".NET Framework 4.0/4.5.x"
-CheckStrongCrypto "HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework\v4.0.30319" ".NET Framework 4.0/4.5.x (32bit app on 64bit OS)"
-CheckStrongCrypto "HKLM:\SOFTWARE\Microsoft\.NETFramework\v2.0.50727" ".NET Framework 3.5"
-CheckStrongCrypto "HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NETFramework\v2.0.50727" ".NET Framework 3.5 (32bit app on 64bit OS)"
+# Source: 
+Write-Info "If you do not use legacy .NET applications you can ignore below warnings (if any detected). Always fix issues found in the above OS-based analysis first."
+$mitigations = @()
+$mitigations = $mitigations + (CheckStrongCrypto "HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319" ".NET Framework 4.0/4.5.x")
+$mitigations = $mitigations + (CheckStrongCrypto "HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework\v4.0.30319" ".NET Framework 4.0/4.5.x (32bit app on 64bit OS)")
+$mitigations = $mitigations + (CheckStrongCrypto "HKLM:\SOFTWARE\Microsoft\.NETFramework\v2.0.50727" ".NET Framework 3.5")
+$mitigations = $mitigations + (CheckStrongCrypto "HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NETFramework\v2.0.50727" ".NET Framework 3.5 (32bit app on 64bit OS)")
+$mitigations = $mitigations | Where-Object { $_ -ne $null } 
+if ($mitigations.Count -gt 0)
+{
+    Write-Warning "MITIGATIONS: per https://docs.microsoft.com/en-us/mem/configmgr/core/plan-design/security/enable-tls-1-2-client"
+    $mitigations | & { process { Write-Warning "    $_" } } 
+}
