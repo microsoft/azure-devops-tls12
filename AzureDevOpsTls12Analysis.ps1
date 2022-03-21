@@ -10,7 +10,7 @@
 .Synopsis
     Analysis of TLS 1.2 compatibility for Azure DevOps.
 
-    Version 2022-03-19
+    Version 2022-03-21
 
 .Description
     This script aims to help customers in preparation to deprecation of TLS 1.0 and TLS 1.1 protocols and weak cipher suites by Azure DevOps Services.
@@ -29,9 +29,9 @@ function Write-Break { Write-Host -ForegroundColor Gray "***********************
 function Write-Title 
 { 
     param($str) 
-    Write-Host -ForegroundColor blue ("=" * ($str.Length + 4))
-    Write-Host -ForegroundColor blue "| $str |" 
-    Write-Host -ForegroundColor blue ("=" * ($str.Length + 4))
+    Write-Host -ForegroundColor yellow ("=" * ($str.Length + 4))
+    Write-Host -ForegroundColor yellow "| $str |" 
+    Write-Host -ForegroundColor yellow ("=" * ($str.Length + 4))
 } 
 
 #
@@ -60,17 +60,17 @@ function TryToSecureConnect
         $remoteEndpoint = $client.Client.RemoteEndPoint
         try
         {
-            $stream.AuthenticateAsClient("")
-            return ($true, $remoteEndpoint)
+            $stream.AuthenticateAsClient($connectHost)
+            return ($true, $remoteEndpoint, $null)
         }    
         catch [System.IO.IOException] # case of failed TLS negotation
         {
-            return ($false, $remoteEndpoint)
-        }         
+            return ($false, $remoteEndpoint, $_)
+        }
+        finally {$stream.Dispose()}
     }
     finally 
     {
-        $stream.Dispose()
         $client.Dispose()
     }    
 }
@@ -82,12 +82,16 @@ function Probe
     
     Write-Info "Probing: $domain"
     
-    ($success, $remoteAddress) = TryToSecureConnect $domain
-    switch ($success) 
+    ($success, $remoteAddress, $handshakeException) = TryToSecureConnect $domain
+    switch ($success)
     {
         $null { Write-nonOK "Failed to reach the destination. This is connectivity or DNS problem, *not* TLS compatibility issue." }
         $true { Write-OK "Probe succeeded. Connection negotiated successfully to $remoteAddress" }
-        $false { Write-nonOK "ISSUE FOUND: Probe failed when TLS-negotiating to $remoteAddress. This may be TLS compatibility issue!"}
+        $false 
+        {
+             Write-nonOK "ISSUE FOUND: This may be TLS compatibility issue!"
+             Write-nonOK  "Probe failed when TLS-negotiating to $remoteAddress. Error: $handshakeException"
+        }
     } 
 
     Write-Break    
@@ -112,9 +116,13 @@ Write-Title "Analysis of TLS 1.2 compatibility: OS"
 #
 #
 
+$winBuildVersion = [System.Environment]::OSVersion.Version
+
 Write-Host "PS Version:" $PSversionTable.PSVersion
-Write-Host "Win Build Version: " $PSversionTable.BuildVersion
+Write-Host "PS Edition: " $PSversionTable.PSEdition
+Write-Host "Win Build Version: "$winBuildVersion
 Write-Host "CLR Version: " $PSversionTable.CLRVersion
+
 
 # List of TLS 1.2 cipher suites required by Azure DevOps Services
 $requiredTls12CipherSuites = (
@@ -154,11 +162,11 @@ function GetTls12CipherSuites
     return $tls12csList
 }
 
-if ($PSversionTable.BuildVersion.Major -ge 10) 
+if ($winBuildVersion.Major -ge 10) 
 {
     if ($res = LookupCipherSuites $requiredTls12CipherSuites)
     { 
-        Write-OK "At least one of the TLS 1.2 cipher suites required by Azure DevOps enabled on the machine!"
+        Write-OK "At least one of the TLS 1.2 cipher suites required by Azure DevOps enabled on the machine (by Get-TlsCipherSuite check)."
         Write-Detail "Enabled cipher suites: $res"
     }
     elseif ($res = GetTls12CipherSuites) 
@@ -171,12 +179,12 @@ if ($PSversionTable.BuildVersion.Major -ge 10)
     else 
     { 
         Write-nonOK "UNEXPECTED ISSUE FOUND: TLS 1.2 does not seem to be supported (no TLS 1.2 cipher suites enabled)" 
-        # No mitigation here: in this branch of the code we are on Windows Server 2016+, Windows 10+ ==> TLS 1.2 should be supported out of the box
+        # No mitigation here: in this branch of the code we're running on Windows Server 2016+, Windows 10+ ==> TLS 1.2 should be supported out of the box
     }
 }
 else
 {
-    Write-Info "Skipping `Get-TlsCipherSuite` due to version of OS lower than WS 2016"
+    Write-Detail "Skipping `Get-TlsCipherSuite` due to version of OS lower than WS 2016"
 }
 
 Write-Break
@@ -184,16 +192,24 @@ Write-Break
 $tls12ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client"
 if (Test-Path -Path $tls12ClientPath)
 {
-    if (((Get-ItemProperty -Path $tls12ClientPath).Enabled -eq 0) -or
-       ((Get-ItemProperty -Path $tls12ClientPath).DisabledByDefault -ne 0)) { 
-        Write-nonOK "ISSUE FOUND: Client TLS 1.2 protocol usage disabled"
+    $clientCheckOK = $true 
+    if ($value = (Get-ItemProperty -Path $tls12ClientPath).Enabled -and $value -eq 0)
+    {
+        Write-nonOK "ISSUE FOUND: Client TLS 1.2 protocol usage not enabled"
         Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs" 
         Write-nonOK "    [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client] 'Enabled'=dword:00000001"
+        $clientCheckOK = $false
+    }
+    if ($value = (Get-ItemProperty -Path $tls12ClientPath).DisabledByDefault -and $value -ne 0) 
+    { 
+        Write-nonOK "ISSUE FOUND: Client TLS 1.2 protocol usage disabled by default"
+        Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs" 
         Write-nonOK "    [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client] 'DisabledByDefault'=dword:00000000"
-     }
-     else 
+        $clientCheckOK = $false
+     }     
+     if ($clientCheckOK)
      {
-        Write-OK "TLS 1.2 client usage enabled!"
+        Write-OK "TLS 1.2 client usage enabled."
      }
      
      Write-Break
@@ -237,7 +253,7 @@ if ($allowedCipherSuitesIntersect.Count -eq 0)
     Write-nonOK "ISSUE FOUND: No TLS 1.2 cipher suites required by Azure DevOps are available" 
 
     $missingCipherSuitesPerLocalConsideringOS = 
-        if ($PSversionTable.BuildVersion.Major -lt 10) { $missingCipherSuitesPerLocal | ?{$minimallySupportedTls12CipherSuites -contains $_ } } 
+        if ($winBuildVersion.Major -lt 10) { $missingCipherSuitesPerLocal | ?{$minimallySupportedTls12CipherSuites -contains $_ } } 
         else { $missingCipherSuitesPerLocal }
     if ($missingCipherSuitesPerLocalConsideringOS.Count -gt 0)
     { 
@@ -250,10 +266,15 @@ if ($allowedCipherSuitesIntersect.Count -eq 0)
     {
         Write-nonOK "Cipher suites are supported by the OS but explicitly disabled (probably by group policy)"
         Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/skypeforbusiness/manage/topology/disable-tls-1.0-1.1"
+        Write-nonOK "    If the below registry change does not work (or works temporarily, ask your domain admin to enable cipher suites by GP)"
         $disabledCipherSuitesListPerGroupPolicy | & { process { Write-nonOK ("    [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002] 'Functions' append lines: " + $_) } }
-        Write-nonOK "    If the above registry change does not work (or works temporarily, ask your domain admin to enable cipher suites by GP)"
     }
-} 
+}
+else
+{
+    Write-OK "At least one of the TLS 1.2 cipher suites required by Azure DevOps enabled on the machine (by registry check)."
+    Write-Detail "Enabled cipher suites: $allowedCipherSuitesIntersect"
+}
 
 #
 #
