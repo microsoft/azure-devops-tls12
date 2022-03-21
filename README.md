@@ -1,6 +1,6 @@
-# Azure DevOps Legacy TLS Deprecation readiness checker
+# Azure DevOps TLS 1.2 transition readiness checker
 
-Azure DevOps Services (as many other Microsoft services) is undergoing transition to deprecate transport protocols TLS 1.0, TLS 1.1 and some cipher suites which are considered weak.
+Azure DevOps Services (as many other Microsoft services) is undergoing transition to deprecate transport protocols TLS 1.0, TLS 1.1 and some TLS 1.2 cipher suites which are considered weak.
 
 See announcement from Azure DevOps team here: https://devblogs.microsoft.com/devops/deprecating-weak-cryptographic-standards-tls-1-0-and-1-1-in-azure-devops-services/
 
