@@ -47,7 +47,7 @@ function TryToSecureConnect
     param($connectHost)
     $client = New-Object Net.Sockets.TcpClient
     try 
-    {
+    {        
         try 
         {
             $client.Connect($connectHost, 443) # if we fail here, it is not SSL/TLS issue
@@ -60,9 +60,10 @@ function TryToSecureConnect
         $remoteEndpoint = $client.Client.RemoteEndPoint
         try
         {
-            $stream.AuthenticateAsClient($connectHost)
+            $askedProtocols = [System.Security.Authentication.SslProtocols](3072) # TLS 1.2
+            $stream.AuthenticateAsClient($connectHost, $null, $askedProtocols, $false)
             return ($true, $remoteEndpoint, $null)
-        }    
+        }
         catch [System.IO.IOException] # case of failed TLS negotation
         {
             return ($false, $remoteEndpoint, $_)
