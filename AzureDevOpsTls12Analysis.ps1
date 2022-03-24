@@ -1,16 +1,11 @@
 ﻿# Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# TODO: when .NT Fwk 4.7+ do we still need SchStrongCrypto reg settings for legacy-targetting apps?
-# TODO: if at computer where Get-TlsCipherSuite enabled, should we also do other-reg check? (or always both anyway?)
-# TODO: for nonOK, add printing of mitigation suggestions, links...
-
-
 <#
 .Synopsis
     Analysis of TLS 1.2 compatibility for Azure DevOps.
 
-    Version 2022-03-21
+    Version 2022-03-24
 
 .Description
     This script aims to help customers in preparation to deprecation of TLS 1.0 and TLS 1.1 protocols and weak cipher suites by Azure DevOps Services.
@@ -19,7 +14,6 @@
 
     Lowest OS version where this script has been tested on: Windows Server 2012 R2.
 #>
-
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -237,7 +231,7 @@ function CheckFunctionsList
             $result = @()
             foreach ($item in $valueList)
             {
-                if ($list.Contains($item)) { $result = $result + $item }
+                if ($list -contains $item) { $result = $result + $item }
             }
             return $result
         }
@@ -339,7 +333,6 @@ function CheckStrongCrypto
     }
 }
 
-# Source: 
 Write-Info "If you do not use legacy .NET applications you can ignore below warnings (if any detected). Always fix issues found in the above OS-based analysis first."
 $mitigations = @()
 $mitigations = $mitigations + (CheckStrongCrypto "HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319" ".NET Framework 4.0/4.5.x")
