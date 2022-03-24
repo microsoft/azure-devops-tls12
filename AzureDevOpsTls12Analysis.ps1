@@ -231,7 +231,7 @@ function CheckFunctionsList
             $result = @()
             foreach ($item in $valueList)
             {
-                if ($list -contains $item) { $result = $result + $item }
+                if ([bool]($list -match $item)) { $result = $result + $item }
             }
             return ($true, $result)
         }
