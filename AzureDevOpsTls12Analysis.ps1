@@ -233,21 +233,21 @@ function CheckFunctionsList
             {
                 if ($list -contains $item) { $result = $result + $item }
             }
-            return $result
+            return ($true, $result)
         }
     }
-    return $null
+    return ($false, @())
 }
 
 $localCiphersPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002"
-$allowedCipherSuitesListPerLocal = CheckFunctionsList $localCiphersPath $requiredTls12CipherSuites @()
-$missingCipherSuitesPerLocal = $requiredTls12CipherSuites | ?{-not ($allowedCipherSuitesListPerLocal -contains $_)}
+($isDefined, $allowedCipherSuitesListPerLocal) = CheckFunctionsList $localCiphersPath $requiredTls12CipherSuites
+$missingCipherSuitesPerLocal = if (-not $isDefined) {$null} else { $requiredTls12CipherSuites | ?{-not ($allowedCipherSuitesListPerLocal -contains $_)} }
 Write-Detail ("Allowed required cipher suites per local: " + $allowedCipherSuitesListPerLocal)
 Write-Detail ("Missing required cipher suites per local: " + $missingCipherSuitesPerLocal)
 
 $gpolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"
-$allowedCipherSuitesListPerGroupPolicy = CheckFunctionsList $gpolicyPath $requiredTls12CipherSuites $allowedCipherSuitesListPerLocal
-$disabledCipherSuitesListPerGroupPolicy = if ($allowedCipherSuitesListPerGroupPolicy -eq $null) { @() } else { $allowedCipherSuitesListPerLocal | ?{-not ($allowedCipherSuitesListPerGroupPolicy -contains $_)} }
+($isDefined, $allowedCipherSuitesListPerGroupPolicy) = CheckFunctionsList $gpolicyPath $requiredTls12CipherSuites
+$disabledCipherSuitesListPerGroupPolicy = if (-not $isDefined) { @() } else { $allowedCipherSuitesListPerLocal | ?{-not ($allowedCipherSuitesListPerGroupPolicy -contains $_)} }
 Write-Detail ("Allowed required cipher suites per GP: " + $allowedCipherSuitesListPerGroupPolicy)
 Write-Detail ("Disabled required cipher suites per GP: " + $disabledCipherSuitesListPerGroupPolicy)
 
