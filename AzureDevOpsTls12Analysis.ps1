@@ -5,8 +5,6 @@
 .Synopsis
     Analysis of TLS 1.2 compatibility for Azure DevOps.
 
-    Version 2022-03-24
-
 .Description
     This script aims to help customers in preparation to deprecation of TLS 1.0 and TLS 1.1 protocols and weak cipher suites by Azure DevOps Services.
     The script performs read-only analysis, does not execute any mitigations.
@@ -14,6 +12,8 @@
 
     Lowest OS version where this script has been tested on: Windows Server 2012 R2.
 #>
+
+$version = "2022-03-24.1"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -28,6 +28,8 @@ function Write-Title
     Write-Host -ForegroundColor Yellow "| $str |" 
     Write-Host -ForegroundColor Yellow ("=" * ($str.Length + 4))
 } 
+
+Write-Detail "Azure DevOps TLS 1.2 transition readiness checker v. $version"
 
 #
 #
@@ -226,6 +228,7 @@ function CheckFunctionsList
     if (Test-Path -Path $path)
     {
         $list = (Get-ItemProperty -Path $path).Functions
+        $list = if ($list -is [string]) {$list -split ","} else {$list}
         if ($list)
         {
             $result = @()
@@ -248,7 +251,7 @@ Write-Detail ("Missing required cipher suites per local: " + $missingCipherSuite
 $gpolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"
 ($isDefined, $allowedCipherSuitesListPerGroupPolicy) = CheckFunctionsList $gpolicyPath $requiredTls12CipherSuites
 $disabledCipherSuitesListPerGroupPolicy = if (-not $isDefined) { @() } else { $allowedCipherSuitesListPerLocal | ?{-not ($allowedCipherSuitesListPerGroupPolicy -contains $_)} }
-Write-Detail ("Allowed required cipher suites per GP: " + $allowedCipherSuitesListPerGroupPolicy)
+Write-Detail ("Allowed required cipher suites per GP: " + (&{if ($isDefined) { $allowedCipherSuitesListPerGroupPolicy } else { "not defined" }}))
 Write-Detail ("Disabled required cipher suites per GP: " + $disabledCipherSuitesListPerGroupPolicy)
 
 $allowedCipherSuitesIntersect = $allowedCipherSuitesListPerLocal | ?{-not ($disabledCipherSuitesListPerGroupPolicy -contains $_)}
