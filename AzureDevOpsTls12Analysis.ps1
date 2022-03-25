@@ -10,10 +10,10 @@
     The script performs read-only analysis, does not execute any mitigations.
     The script runs on Windows client / server OS and detects well-known causes of TLS 1.2 and cipher suite incompatibilities.
 
-    Lowest OS version where this script has been tested on: Windows Server 2012 R2.
+    Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-03-24.1"
+$version = "2022-03-25"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -125,6 +125,65 @@ Write-Host "PS Edition: " $PSversionTable.PSEdition
 Write-Host "Win Build Version: "$winBuildVersion
 Write-Host "CLR Version: " $PSversionTable.CLRVersion
 
+Write-Break
+
+function CheckValueIsExpected
+{
+    param($path, $propertyName, $expectedBoolValue, $undefinedMeansExpectedValue)
+    if (Test-Path -Path $path)
+    {
+        $value =  Get-ItemProperty -Path $path | Select-Object -ExpandProperty $propertyName -ErrorAction SilentlyContinue
+        if ($value -eq $null) 
+        { 
+            return $undefinedMeansExpectedValue
+        }
+        else 
+        {
+            return [bool]$value -eq [bool]$expectedBoolValue
+        }
+    }
+    else
+    {
+        return $undefinedMeansExpectedValue
+    }
+}
+
+
+$tls12ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client"
+
+$clientCheckOK = $true 
+$mitigations = @()
+
+if (-not (CheckValueIsExpected $tls12ClientPath "Enabled" 1 $true))
+{
+    $mitigations = $mitigations + "[$tls12ClientPath] 'Enabled'=dword:1"
+    $clientCheckOK = $false   
+}
+
+$undefinedMeansEnabled = $true
+if (($winBuildVersion.Major -lt 6) -or ($winBuildVersion.Major -eq 6 -and $winBuildVersion.Minor -le 2)) 
+{ 
+    # source: https://support.microsoft.com/en-us/topic/update-to-enable-tls-1-1-and-tls-1-2-as-default-secure-protocols-in-winhttp-in-windows-c4bd73d2-31d7-761e-0178-11268bb10392
+    # source: https://support.microsoft.com/en-us/topic/update-to-add-support-for-tls-1-1-and-tls-1-2-in-windows-server-2008-sp2-windows-embedded-posready-2009-and-windows-embedded-standard-2009-b6ab553a-fa8f-3f5e-287c-e752eb3ce5f4
+    Write-Detail "For old Windows versions (WS 2012, Windows 7 and older) TLS 1.2 must be explicitly enabled..."
+    $undefinedMeansEnabled = $false 
+}
+if (-not (CheckValueIsExpected $tls12ClientPath "DisabledByDefault" 0 $undefinedMeansEnabled))
+{
+    $mitigations = $mitigations + "[$tls12ClientPath] 'DisabledByDefault'=dword:0"
+    $clientCheckOK = $false
+}
+if ($clientCheckOK)
+{
+    Write-OK "TLS 1.2 client usage enabled."
+}
+else
+{
+    Write-nonOK "ISSUE FOUND: TLS 1.2 protocol client usage disabled"
+    Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs" 
+    $mitigations | & { process { Write-nonOK("    $_") } } 
+}
+Write-Break
 
 # List of TLS 1.2 cipher suites required by Azure DevOps Services
 $requiredTls12CipherSuites = (
@@ -190,36 +249,6 @@ else
 }
 
 Write-Break
-
-$tls12ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client"
-if (Test-Path -Path $tls12ClientPath)
-{
-    $clientCheckOK = $true 
-    $mitigations = @()
-    if ((($value = (Get-ItemProperty -Path $tls12ClientPath).Enabled) -ne $null) -and ($value -eq 0))
-    {   
-        $mitigations = $mitigations + "[$tls12ClientPath] 'Enabled'=dword:1"
-        $clientCheckOK = $false
-    }
-    if ((($value = (Get-ItemProperty -Path $tls12ClientPath).DisabledByDefault) -ne $null) -and ($value -ne 0)) 
-    { 
-        $mitigations = $mitigations + "[$tls12ClientPath] 'DisabledByDefault'=dword:0"
-        $clientCheckOK = $false
-    }
-
-    if ($clientCheckOK)
-    {
-       Write-OK "TLS 1.2 client usage enabled."
-    }
-    else
-    {
-       Write-nonOK "ISSUE FOUND: TLS 1.2 protocol client usage disabled"
-       Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs" 
-       $mitigations | & { process { Write-nonOK("    $_") } } 
-    }
-     
-    Write-Break
-}
 
 function CheckFunctionsList
 {
