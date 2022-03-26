@@ -11,18 +11,34 @@ We gathered most frequently seen TLS-compatibility issues reported by our custom
 Run the script:
 ```ps
 AzureDevOpsTls12Analysis.ps1
-````
+```
 Run in Powershell version 4 or higher. Windows-only, the script has been tested on Windows Server 2012 R2 and above.
 
 What the script does:
-- performs a probe by opening a test connection to one of Azure DevOps Services sites which have already fully migrated to TLS 1.2 with strong cipher suites.
-- performs an analysis of OS-level issues by looking at selected Windows registry spots known to be sources of TLS-incompatibilities and misconfigurations. OS-level issues are shared by all the software running on the machine that uses OS's HTTPS/TLS stack.
-- performs an analysis of .NET Framework configuration in Windows registry that can be used to make old .NET applications (applications built against old versions of .NET Framework) to leverage all OS's TLS capabilities. 
+- performs a **probe** by opening a test secure connection to https://status.dev.azure.com. This site requires TLS 1.2 & strong cipher suites as will all Azure DevOps sites after the deprecation of TLS 1.0 and 1.1 protocols takes place. 
+    - The probe recognizes when the issue is network connectivity or DNS resolving problem vs. when it is caused by TLS incompatibility.         
+    - Successfull probe is a proof that the OS allows TLS 1.2 and at least one of the required cipher suites is available. This does *not* guarantee that all other software connecting to Azure DevOps from this computer will work without TLS issues.
+- performs an **analysis of OS-level issues** by looking at the selected Windows registry keys which enable/disable TLS 1.2 protocol and influence the set of usable cipher suites. OS-level configuration is shared by all the software which uses HTTPS/TLS stack provided by OS.
+- performs an **analysis of .NET Framework**: checks version of .NET framework installed and configuration in Windows registry. 
+    - Looks for presence of registry changes which enable .NET apps built against .NET Framework versions prior to 4.7 to leverage TLS capabilities suported by OS. Without these changes, old .NET apps will default to usage of TLS 1.0 even when TLS 1.2 is enabled by the OS.
+    - If you don't intend to use legacy .NET programs that communicate over network on the computer, no need to apply these.
 
 What the script does not:
-- The script does not execute any mitigations that would make your computer TLS 1.2-ready.
+- The script does not execute any mitigations itself. It only prints mitigation advice which consists of URL of docs article and steps to be executed (either cmdlets to call or registry changes to make).
 - The script does not need elevated permissions to run.
-- The script cannot say if specific app will have TLS issues. There are apps which have TLS/SSL version hard-code or configured. 
+- The script cannot say if specific app will have TLS issues. There are apps which have TLS/SSL version of choice hard-code or configured.
+
+## Examples
+
+### Case 1
+
+![Screenshot for Case 1](docs/screen-probeOK-osOK-fwkWarns.gif)
+
+### Case 2
+
+![Screenshot for Case 2](docs/screen-probeFail-osClientHit-osGroupPolicyHit-fwkWarns.gif)
+
+
 
 ## Contributing
 
