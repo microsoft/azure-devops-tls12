@@ -198,57 +198,133 @@ $minimallySupportedTls12CipherSuites = (
     "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256"
 )
 
-function LookupCipherSuites 
-{ 
-    param($csList) 
-    $enabledList = $csList | & {
-        process {
-            $csName = $_
-            $csArray = (Get-TlsCipherSuite -Name $csName) | Where-Object { $_.Name -eq $csName }             
-            if ($csArray.Count -gt 0) { $csName }
-        }
-    }    
-    return $enabledList
-}
-
-function GetTls12CipherSuites 
+function GetAllCipherSuitesByBCryptAPI
 {
-    $tls12protocolCode = 771
-    $csArray = Get-TlsCipherSuite
-    $tls12csList = $csArray | & {
-        process {
-            if (($_.Protocols | Where-Object { $_ -eq $tls12protocolCode }).Count -gt 0) { $_.Name }
+    # source: https://docs.microsoft.com/en-us/windows/win32/api/bcrypt/nf-bcrypt-bcryptenumcontextfunctions
+    try
+    {
+        $definitionFunc = 
+@'
+        [DllImport(@"Bcrypt.dll",CharSet = CharSet.Unicode)] 
+        public static extern uint BCryptEnumContextFunctions(uint dwTable, string pszContext, uint dwInterface, ref uint pcbBuffer, ref IntPtr ppBuffer);
+        [DllImport("Bcrypt.dll")]
+        public static extern void BCryptFreeBuffer(IntPtr pvBuffer);
+'@
+        $definitionStruct = 
+@'
+            using System;
+            using System.Runtime.InteropServices;
+
+            [StructLayout(LayoutKind.Sequential)]
+            public struct CRYPT_CONTEXT_FUNCTIONS
+            {
+                public uint cFunctions;
+                public IntPtr rgpszFunctions;
+            }
+'@
+
+        $CRYPT_LOCAL = [uint32]"0x00000001"
+        $NCRYPT_SCHANNEL_INTERFACE = [uint32]"0x00010002"
+        $CRYPT_PRIORITY_TOP = [uint32]"0x00000000"
+        $CRYPT_PRIORITY_BOTTOM = [uint32]"0xFFFFFFFF"
+
+        $guid = (New-Guid).ToString().Replace('-', '_')
+        $typeFunc = Add-Type -MemberDefinition $definitionFunc -Name "T$guid" -PassThru
+
+        if (-not ([System.Management.Automation.PSTypeName]'CRYPT_CONTEXT_FUNCTIONS').Type)
+        {
+            Add-Type $definitionStruct
         }
+        $struct = New-Object CRYPT_CONTEXT_FUNCTIONS
+        $typeStruct = $struct.GetType()
+        
+        $cbBuffer = [uint32]0
+        $ppBuffer = [IntPtr]::Zero;
+        $ret = $typeFunc::BCryptEnumContextFunctions($CRYPT_LOCAL, "SSL", $NCRYPT_SCHANNEL_INTERFACE, [ref]$cbBuffer, [ref]$ppBuffer)
+
+        $cipherSuitesResult = @()
+        if ($ret -eq 0)
+        {
+            $functions = [system.runtime.interopservices.marshal]::PtrToStructure($ppBuffer,[System.Type]$typeStruct)
+            $pStr = $functions.rgpszFunctions
+            for ($i = 0; $i -lt $functions.cFunctions; $i = $i + 1)
+            {
+                $str = [system.runtime.interopservices.marshal]::PtrToStringUni([system.runtime.interopservices.marshal]::ReadIntPtr($pStr))
+                $cipherSuitesResult = $cipherSuitesResult + $str
+                $offset = $pStr.ToInt64() + [system.IntPtr]::Size
+                $pStr = [System.IntPtr]::New($offset)
+            }
+            $typeFunc::BCryptFreeBuffer($ppBuffer);
+            return $cipherSuitesResult
+        }
+        else
+        {
+            Write-nonOK "Error when retrieving list of cipher suites by BCript API - return code $ret"
+        }
+        
     }
-    return $tls12csList
+    catch { Write-nonOK "Error when retrieving list of cipher suites by BCript API: $_" }
 }
 
+$gettlsciphersuiteAnalysisDone = $flase
 if ($winBuildVersion.Major -ge 10) 
 {
-    if ($res = LookupCipherSuites $requiredTls12CipherSuites)
+    Write-Detail "Running Get-TlsCipherCuite check..."
+
+    $allEnabledCipherSuiteObjs = Get-TlsCipherSuite
+    $allEnabledCipherSuites = $allEnabledCipherSuiteObjs.Name
+    $tls12protocolCode = 771
+    $tls12EnabledCipherSuites = $allEnabledCipherSuiteObjs | & {
+            process {
+                if (($_.Protocols | Where-Object { $_ -eq $tls12protocolCode }).Count -gt 0) { $_.Name }
+            }
+        }
+    Write-Detail "All enabled TLS 1.2 cipher suites: $tls12EnabledCipherSuites"
+
+    $requiredEnabledCipherSuites = $requiredTls12CipherSuites | Where-Object { $allEnabledCipherSuites -contains $_ }    
+    Write-Detail "Matching cipher suites: $requiredEnabledCipherSuites"
+
+    if ($requiredEnabledCipherSuites)
     { 
-        Write-OK "At least one of the TLS 1.2 cipher suites required by Azure DevOps enabled on the machine (by Get-TlsCipherSuite check)."
-        Write-Detail "Enabled cipher suites: $res"
+        Write-OK "At least one of the TLS 1.2 cipher suites required by Azure DevOps enabled on the machine."        
+        $gettlsciphersuiteAnalysisDone = $true
     }
-    elseif ($res = GetTls12CipherSuites) 
+    elseif ($tls12EnabledCipherSuites) 
     {
-        Write-nonOK "ISSUE FOUND: TLS 1.2 is supported but none of the TLS 1.2 cipher suites required by Azure DevOps are enabled."
+        Write-nonOK "ISSUE FOUND: None of the TLS 1.2 cipher suites required by Azure DevOps are enabled."
         Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/powershell/module/tls/enable-tlsciphersuite?view=windowsserver2022-ps"
         Write-nonOK "    # Run the below `Enable-TlsCipherSuite` cmdlets as administrator:"
-        $requiredTls12CipherSuites | & { process { Write-NonOK "    Enable-TlsCipherSuite -Name $_" } }
+        $requiredTls12CipherSuites | & { process { Write-NonOK "    Enable-TlsCipherSuite -Name $_" } }        
+        $gettlsciphersuiteAnalysisDone = $true
     }
     else 
     { 
         Write-nonOK "UNEXPECTED ISSUE FOUND: TLS 1.2 does not seem to be supported (no TLS 1.2 cipher suites enabled)" 
+        Write-Detail "All enabled cipher suites: $allEnabledCipherSuites"
         # No mitigation here: in this branch of the code we're running on Windows Server 2016+, Windows 10+ ==> TLS 1.2 should be supported out of the box
     }
-}
-else
-{
-    Write-Detail "Skipping `Get-TlsCipherSuite` due to version of OS lower than WS 2016"
+    Write-Break
 }
 
-Write-Break
+if (-not $gettlsciphersuiteAnalysisDone)
+{
+    Write-Detail "Running BCrypt check..."
+    $allCipherSuites = GetAllCipherSuitesByBCryptAPI
+    $res = $requiredTls12CipherSuites | Where-Object { $allCipherSuites -contains $_ }
+    if ($res)
+    {
+        Write-OK "At least one of the TLS 1.2 cipher suites required by Azure DevOps enabled on the machine."
+        Write-Detail "Matching cipher suites: $res"
+    }
+    else
+    {
+        Write-nonOK "ISSUE FOUND: None of the TLS 1.2 cipher suites required by Azure DevOps are enabled."
+        Write-Detail "All enabled cipher suites: $allCipherSuites"
+    }
+    Write-Break
+}
+
+Write-Detail "Running registry check..."
 
 function CheckFunctionsList
 {
@@ -302,7 +378,7 @@ if ($allowedCipherSuitesIntersect.Count -eq 0)
         Write-nonOK "Cipher suites are supported by the OS but explicitly disabled (probably by group policy)"
         Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/skypeforbusiness/manage/topology/disable-tls-1.0-1.1"
         Write-nonOK "    If the below registry change does not work (or works temporarily, ask your domain admin to enable cipher suites by GP)"
-        $disabledCipherSuitesListPerGroupPolicy | & { process { Write-nonOK ("    [$gpolicyPath] 'Functions' append lines: " + $_) } }
+        $disabledCipherSuitesListPerGroupPolicy | & { process { Write-nonOK ("    [$gpolicyPath] 'Functions' append: " + $_) } }
     }
 }
 else
