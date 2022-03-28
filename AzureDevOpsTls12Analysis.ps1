@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-03-25"
+$version = "2022-03-28"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -267,6 +267,8 @@ function GetAllCipherSuitesByBCryptAPI
 }
 
 $gettlsciphersuiteAnalysisDone = $flase
+$requiredEnabledCipherSuites = @()
+$allEnabledCipherSuites = @()
 if ($winBuildVersion.Major -ge 10) 
 {
     Write-Detail "Running Get-TlsCipherCuite check..."
@@ -292,9 +294,6 @@ if ($winBuildVersion.Major -ge 10)
     elseif ($tls12EnabledCipherSuites) 
     {
         Write-nonOK "ISSUE FOUND: None of the TLS 1.2 cipher suites required by Azure DevOps are enabled."
-        Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/powershell/module/tls/enable-tlsciphersuite?view=windowsserver2022-ps"
-        Write-nonOK "    # Run the below `Enable-TlsCipherSuite` cmdlets as administrator:"
-        $requiredTls12CipherSuites | & { process { Write-NonOK "    Enable-TlsCipherSuite -Name $_" } }        
         $gettlsciphersuiteAnalysisDone = $true
     }
     else 
@@ -309,82 +308,105 @@ if ($winBuildVersion.Major -ge 10)
 if (-not $gettlsciphersuiteAnalysisDone)
 {
     Write-Detail "Running BCrypt check..."
-    $allCipherSuites = GetAllCipherSuitesByBCryptAPI
-    $res = $requiredTls12CipherSuites | Where-Object { $allCipherSuites -contains $_ }
-    if ($res)
+    $allEnabledCipherSuites = GetAllCipherSuitesByBCryptAPI
+    $requiredEnabledCipherSuites = $requiredTls12CipherSuites | Where-Object { $allEnabledCipherSuites -contains $_ }
+    if ($requiredEnabledCipherSuites)
     {
         Write-OK "At least one of the TLS 1.2 cipher suites required by Azure DevOps enabled on the machine."
-        Write-Detail "Matching cipher suites: $res"
+        Write-Detail "Matching cipher suites: $requiredEnabledCipherSuites"
     }
     else
     {
         Write-nonOK "ISSUE FOUND: None of the TLS 1.2 cipher suites required by Azure DevOps are enabled."
-        Write-Detail "All enabled cipher suites: $allCipherSuites"
+        Write-Detail "All enabled cipher suites: $allEnabledCipherSuites"
     }
     Write-Break
 }
 
 Write-Detail "Running registry check..."
 
-function CheckFunctionsList
+function GetFunctionsList
 {
-    param ($path, $valueList)
+    param ($path)
 
     if (Test-Path -Path $path)
     {
         $list = (Get-ItemProperty -Path $path).Functions
         $list = if ($list -is [string]) {$list -split ","} else {$list}
-        if ($list)
-        {
-            $result = @()
-            foreach ($item in $valueList)
-            {
-                if ($list -contains $item) { $result = $result + $item }
-            }
-            return ($true, $result)
-        }
+        if ($list) { return ($true, $list) }
     }
     return ($false, @())
 }
 
-$localCiphersPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002"
-($isDefined, $allowedCipherSuitesListPerLocal) = CheckFunctionsList $localCiphersPath $requiredTls12CipherSuites
-$missingCipherSuitesPerLocal = if (-not $isDefined) {$null} else { $requiredTls12CipherSuites | ?{-not ($allowedCipherSuitesListPerLocal -contains $_)} }
-Write-Detail ("Allowed required cipher suites per local: " + $allowedCipherSuitesListPerLocal)
-Write-Detail ("Missing required cipher suites per local: " + $missingCipherSuitesPerLocal)
 
+$expectedCipherSuitesConsideringOS = if ($winBuildVersion.Major -lt 10) { $minimallySupportedTls12CipherSuites } else { $requiredTls12CipherSuites }
 $gpolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"
-($isDefined, $allowedCipherSuitesListPerGroupPolicy) = CheckFunctionsList $gpolicyPath $requiredTls12CipherSuites
-$disabledCipherSuitesListPerGroupPolicy = if (-not $isDefined) { @() } else { $allowedCipherSuitesListPerLocal | ?{-not ($allowedCipherSuitesListPerGroupPolicy -contains $_)} }
-Write-Detail ("Allowed required cipher suites per GP: " + (&{if ($isDefined) { $allowedCipherSuitesListPerGroupPolicy } else { "not defined" }}))
-Write-Detail ("Disabled required cipher suites per GP: " + $disabledCipherSuitesListPerGroupPolicy)
+($isDefined, $allowedCipherSuitesListPerGroupPolicy) = GetFunctionsList $gpolicyPath
 
-$allowedCipherSuitesIntersect = $allowedCipherSuitesListPerLocal | ?{-not ($disabledCipherSuitesListPerGroupPolicy -contains $_)}
-if ($allowedCipherSuitesIntersect.Count -eq 0)
+if ($isDefined)
 {
-    Write-nonOK "ISSUE FOUND: No TLS 1.2 cipher suites required by Azure DevOps are available" 
+    Write-Detail "Group Policy cipher suites override defined: $allowedCipherSuitesListPerGroupPolicy"
+    $missingCipherSuitesConsideringOS = $requiredTls12CipherSuites | Where-Object { -not ($allowedCipherSuitesListPerGroupPolicy -contains $_) }
+    $suggestedFunctionsContent = ($missingCipherSuitesConsideringOS + $allowedCipherSuitesListPerGroupPolicy) -join ','
 
-    $missingCipherSuitesPerLocalConsideringOS = 
-        if ($winBuildVersion.Major -lt 10) { $missingCipherSuitesPerLocal | ?{$minimallySupportedTls12CipherSuites -contains $_ } } 
-        else { $missingCipherSuitesPerLocal }
-    if ($missingCipherSuitesPerLocalConsideringOS.Count -gt 0)
-    { 
-        Write-nonOK "This OS does not enable expected TLS 1.2 cipher suites which were either manually disabled or OS is not properly updated."
-        Write-nonOK "MITIGATION: update OS, then per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs"
-        $missingCipherSuitesPerLocalConsideringOS | & { process { Write-nonOK ("    [$localCiphersPath] 'Functions' append line: " + $_) } }
-    }
-    if ($disabledCipherSuitesListPerGroupPolicy.Count -gt 0)
+    if ($requiredEnabledCipherSuites -eq $null -or $requiredEnabledCipherSuites.Length -eq 0)
     {
-        Write-nonOK "Cipher suites are supported by the OS but explicitly disabled (probably by group policy)"
-        Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/skypeforbusiness/manage/topology/disable-tls-1.0-1.1"
-        Write-nonOK "    If the below registry change does not work (or works temporarily, ask your domain admin to enable cipher suites by GP)"
-        $disabledCipherSuitesListPerGroupPolicy | & { process { Write-nonOK ("    [$gpolicyPath] 'Functions' append: " + $_) } }
+        Write-nonOK "MITIGATION A: via Local Group Policy setting"
+        Write-nonOK "    Run gpedit.msc: "
+        Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
+        Write-nonOK "    - Choose setting ""SSL Cipher Suite Order"" -> Edit"
+        Write-nonOK "    - If 'Enabled' is checked, change to 'Not configured'"
+        Write-nonOK "    - If 'Enabled' is not set, then cipher suite might be enforced by domain GPO"
+        Write-nonOK ""
+        Write-nonOK "MITIGATION B: via registry change"
+        Write-nonOK "    # Run the below powershell scipt AS ADMINISTRATOR. Restart the computer after change."
+        Write-nonOK "    [microsoft.win32.registry]::LocalMachine.OpenSubKey(""Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"", `$true).DeleteValue(""Functions"")"
+        Write-nonOK ""
+        Write-nonOK "MITIGATION C: if the above does not work (or works temporarily) ask your domain administrator if the cipher suites are enforced via domain GPO."        
+    }
+    else
+    {
+        Write-Detail "No need to change the GP override since cipher suites required by Azure DevOps are already enabled."
     }
 }
 else
 {
-    Write-OK "At least one of the TLS 1.2 cipher suites required by Azure DevOps enabled on the machine (by registry check)."
-    Write-Detail "Enabled cipher suites: $allowedCipherSuitesIntersect"
+    if ($requiredEnabledCipherSuites -eq $null -or $requiredEnabledCipherSuites.Length -eq 0)
+    {
+        Write-Detail "No Group Policy cipher suites override defined and cipher suites required by Azure DevOps are not enabled." 
+        if ($winBuildVersion.Major -ge 10) 
+        {
+            Write-nonOK "MITIGATION A: per https://docs.microsoft.com/en-us/powershell/module/tls/enable-tlsciphersuite?view=windowsserver2022-ps"
+            Write-nonOK "    # Run the below powershell scipt AS ADMINISTRATOR. Restart the readiness checker scipt in new PowerShell console to see effects."
+            Write-nonOK "    # Continue to mitigations B/C only if all the below calls return 'Not Effective'"
+            $requiredTls12CipherSuites | & { process { Write-NonOK "    Enable-TlsCipherSuite -Name $_; if (Get-TlsCipherSuite -Name $_) {'Enabled!'} else {'Not effective.'}" } }
+            Write-nonOK ""
+        }
+        else
+        {
+            Write-nonOK "MITIGATION A: omitted (not supported by the OS)"
+            Write-nonOK ""
+        }
+
+        $suggestedFunctionsContent = ($expectedCipherSuitesConsideringOS + $allEnabledCipherSuites) -join ','
+
+        Write-nonOK "MITIGATION B: create an override via Local Group Policy setting"
+        Write-nonOK "    Run gpedit.msc: "
+        Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
+        Write-nonOK "    - Choose setting ""SSL Cipher Suite Order"" -> Edit"
+        Write-nonOK "    - Set as 'Enabled'"
+        Write-nonOK "    - Set 'SSL Cipher Suites' to value (without quotes): ""$suggestedFunctionsContent"""
+        Write-nonOK "    - Hit 'Apply'"
+        Write-nonOK "    Restart the computer"
+        Write-nonOK ""
+        Write-nonOK "MITIGATION C: via registry change"
+        Write-nonOK "    # Run the below powershell scipt AS ADMINISTRATOR, RESTART the computer after change."
+        Write-nonOK "    [microsoft.win32.registry]::SetValue(""HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"", ""Functions"",""$suggestedFunctionsContent"")"
+    }
+    else
+    {
+        Write-Detail "No Group Policy cipher suites override defined. No need to create the GP override since cipher suites required by Azure DevOps are already enabled."
+    }
 }
 
 #
