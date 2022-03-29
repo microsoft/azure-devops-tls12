@@ -347,7 +347,7 @@ if ($isDefined)
 {
     Write-Detail "Group Policy cipher suites override defined: $allowedCipherSuitesListPerGroupPolicy"
     $missingCipherSuitesConsideringOS = $requiredTls12CipherSuites | Where-Object { -not ($allowedCipherSuitesListPerGroupPolicy -contains $_) }
-    $suggestedFunctionsContent = ($missingCipherSuitesConsideringOS + $allowedCipherSuitesListPerGroupPolicy) -join ','
+    $suggestedFunctionsContent = ($missingCipherSuitesConsideringOS + $allowedCipherSuitesListPerGroupPolicy) -join ','    
 
     if ($requiredEnabledCipherSuites -eq $null -or $requiredEnabledCipherSuites.Length -eq 0)
     {
@@ -355,8 +355,12 @@ if ($isDefined)
         Write-nonOK "    Run gpedit.msc: "
         Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
         Write-nonOK "    - Choose setting ""SSL Cipher Suite Order"" -> Edit"
-        Write-nonOK "    - If 'Enabled' is checked, change to 'Not configured'"
-        Write-nonOK "    - If 'Enabled' is not set, then cipher suite might be enforced by domain GPO"
+        Write-nonOK "    - If 'Enabled' is not checked, then cipher suite setting is possibly enforced by domain GPO (consult domain administrator)"
+        Write-nonOK "    - If 'Enabled' is checked:"
+        Write-nonOK "      - *either* change to 'Not configured' (resets to OS-default setting)"""
+        Write-nonOK "      - *or* keep 'Enabled' and set 'SSL Cipher Suites' to value (without quotes): ""$suggestedFunctionsContent"""
+        Write-nonOK "    - Press 'OK' button"
+        Write-nonOK "    Restart the computer"
         Write-nonOK ""
         Write-nonOK "MITIGATION B: via registry change"
         Write-nonOK "    # Run the below powershell scipt AS ADMINISTRATOR. Restart the computer after change."
@@ -396,7 +400,7 @@ else
         Write-nonOK "    - Choose setting ""SSL Cipher Suite Order"" -> Edit"
         Write-nonOK "    - Set as 'Enabled'"
         Write-nonOK "    - Set 'SSL Cipher Suites' to value (without quotes): ""$suggestedFunctionsContent"""
-        Write-nonOK "    - Hit 'Apply'"
+        Write-nonOK "    - Press 'OK' button"
         Write-nonOK "    Restart the computer"
         Write-nonOK ""
         Write-nonOK "MITIGATION C: via registry change"
