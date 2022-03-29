@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-03-28"
+$version = "2022-03-29"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -345,8 +345,10 @@ $gpolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL
 
 if ($isDefined)
 {
+    $missingCipherSuitesConsideringOS = $expectedCipherSuitesConsideringOS | Where-Object { -not ($allowedCipherSuitesListPerGroupPolicy -contains $_) }    
     Write-Detail "Group Policy cipher suites override defined: $allowedCipherSuitesListPerGroupPolicy"
-    $missingCipherSuitesConsideringOS = $requiredTls12CipherSuites | Where-Object { -not ($allowedCipherSuitesListPerGroupPolicy -contains $_) }
+    Write-Detail "Missing cipher suites: $missingCipherSuitesConsideringOS"
+
     $suggestedFunctionsContent = ($missingCipherSuitesConsideringOS + $allowedCipherSuitesListPerGroupPolicy) -join ','    
 
     if ($requiredEnabledCipherSuites -eq $null -or $requiredEnabledCipherSuites.Length -eq 0)
@@ -358,12 +360,12 @@ if ($isDefined)
         Write-nonOK "    - If 'Enabled' is not checked, then cipher suite setting is possibly enforced by domain GPO (consult domain administrator)"
         Write-nonOK "    - If 'Enabled' is checked:"
         Write-nonOK "      - *either* change to 'Not configured' (resets to OS-default setting)"""
-        Write-nonOK "      - *or* keep 'Enabled' and set 'SSL Cipher Suites' to value (without quotes): ""$suggestedFunctionsContent"""
+        Write-nonOK "      - *or* keep 'Enabled' and in field 'SSL Cipher Suites' add items to comma-separated list: $missingCipherSuitesConsideringOS"
         Write-nonOK "    - Press 'OK' button"
         Write-nonOK "    Restart the computer"
         Write-nonOK ""
         Write-nonOK "MITIGATION B: via registry change"
-        Write-nonOK "    # Run the below powershell scipt AS ADMINISTRATOR. Restart the computer after change."
+        Write-nonOK "    # Run the below powershell scipt AS ADMINISTRATOR. Restart the computer after the change."
         Write-nonOK "    [microsoft.win32.registry]::LocalMachine.OpenSubKey(""Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"", `$true).DeleteValue(""Functions"")"
         Write-nonOK ""
         Write-nonOK "MITIGATION C: if the above does not work (or works temporarily) ask your domain administrator if the cipher suites are enforced via domain GPO."        
@@ -378,6 +380,7 @@ else
     if ($requiredEnabledCipherSuites -eq $null -or $requiredEnabledCipherSuites.Length -eq 0)
     {
         Write-Detail "No Group Policy cipher suites override defined and cipher suites required by Azure DevOps are not enabled." 
+        
         if ($winBuildVersion.Major -ge 10) 
         {
             Write-nonOK "MITIGATION A: per https://docs.microsoft.com/en-us/powershell/module/tls/enable-tlsciphersuite?view=windowsserver2022-ps"
