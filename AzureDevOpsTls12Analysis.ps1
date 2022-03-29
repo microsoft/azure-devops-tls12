@@ -228,7 +228,7 @@ function GetAllCipherSuitesByBCryptAPI
         $CRYPT_PRIORITY_TOP = [uint32]"0x00000000"
         $CRYPT_PRIORITY_BOTTOM = [uint32]"0xFFFFFFFF"
 
-        $guid = (New-Guid).ToString().Replace('-', '_')
+        $guid = [System.Guid]::NewGuid().ToString().Replace('-', '_')
         $typeFunc = Add-Type -MemberDefinition $definitionFunc -Name "T$guid" -PassThru
 
         if (-not ([System.Management.Automation.PSTypeName]'CRYPT_CONTEXT_FUNCTIONS').Type)
@@ -252,7 +252,7 @@ function GetAllCipherSuitesByBCryptAPI
                 $str = [system.runtime.interopservices.marshal]::PtrToStringUni([system.runtime.interopservices.marshal]::ReadIntPtr($pStr))
                 $cipherSuitesResult = $cipherSuitesResult + $str
                 $offset = $pStr.ToInt64() + [system.IntPtr]::Size
-                $pStr = [System.IntPtr]::New($offset)
+                $pStr = New-Object System.IntPtr $offset
             }
             $typeFunc::BCryptFreeBuffer($ppBuffer);
             return $cipherSuitesResult
