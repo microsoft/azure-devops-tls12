@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-03-29"
+$version = "2022-04-02"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -127,9 +127,12 @@ Write-Host "CLR Version: " $PSversionTable.CLRVersion
 
 Write-Break
 
+$boolCheck = { param($left, $right) return ([bool]$left -eq [bool]$right) }
+$exactCheck = { param($left, $right) return ($left -eq $right) }
+
 function CheckValueIsExpected
 {
-    param($path, $propertyName, $expectedBoolValue, $undefinedMeansExpectedValue)
+    param($path, $propertyName, $expectedBoolValue, $undefinedMeansExpectedValue, $predicate)
     if (Test-Path -Path $path)
     {
         $value =  Get-ItemProperty -Path $path | Select-Object -ExpandProperty $propertyName -ErrorAction SilentlyContinue
@@ -139,7 +142,7 @@ function CheckValueIsExpected
         }
         else 
         {
-            return [bool]$value -eq [bool]$expectedBoolValue
+            return $predicate.Invoke($value, $expectedBoolValue)
         }
     }
     else
@@ -154,7 +157,7 @@ $tls12ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCH
 $clientCheckOK = $true 
 $mitigations = @()
 
-if (-not (CheckValueIsExpected $tls12ClientPath "Enabled" 1 $true))
+if (-not (CheckValueIsExpected $tls12ClientPath "Enabled" 1 $true $boolCheck))
 {
     $mitigations = $mitigations + "[$tls12ClientPath] 'Enabled'=dword:1"
     $clientCheckOK = $false   
@@ -168,7 +171,7 @@ if (($winBuildVersion.Major -lt 6) -or ($winBuildVersion.Major -eq 6 -and $winBu
     Write-Detail "For old Windows versions (WS 2012, Windows 7 and older) TLS 1.2 must be explicitly enabled..."
     $undefinedMeansEnabled = $false 
 }
-if (-not (CheckValueIsExpected $tls12ClientPath "DisabledByDefault" 0 $undefinedMeansEnabled))
+if (-not (CheckValueIsExpected $tls12ClientPath "DisabledByDefault" 0 $undefinedMeansEnabled $boolCheck))
 {
     $mitigations = $mitigations + "[$tls12ClientPath] 'DisabledByDefault'=dword:0"
     $clientCheckOK = $false
@@ -323,7 +326,30 @@ if (-not $gettlsciphersuiteAnalysisDone)
     Write-Break
 }
 
-Write-Detail "Running registry check..."
+Write-Detail "Running DHE check..."
+
+$dhePath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\Diffie-Hellman"
+$dheIsExpected = CheckValueIsExpected $dhePath "Enabled" 4294967295 $true $exactCheck
+if ($dheIsExpected)
+{
+    Write-Detail "Diffie-Helman key exchange allowed."
+}
+else
+{    
+    $dheFiltered = $requiredEnabledCipherSuites | Where-Object { -not ($_ -match "_DHE_") }
+    Write-Host "Diffie-Helman key exchange disabled. Enabled cipher suites after filtering: $dheFiltered"
+    if (($requiredEnabledCipherSuites.Length -gt 0) -and $dheFiltered.Length -eq 0) 
+    {    
+        Write-nonOK "ISSUE FOUND: No TLS 1.2 cipher suites required by Azure DevOps remain enabled after applying Diffie-Hellman disablement."
+        Write-nonOK "MITIGATION: by registry change"
+        Write-nonOK "    [$dhePath] 'Enabled'=dword:0xFFFFFFFF"
+    }
+    $requiredEnabledCipherSuites = $dheFiltered
+}
+
+Write-Break
+
+Write-Detail "Running Group Policy check..."
 
 function GetFunctionsList
 {
@@ -351,7 +377,7 @@ if ($isDefined)
 
     $suggestedFunctionsContent = ($missingCipherSuitesConsideringOS + $allowedCipherSuitesListPerGroupPolicy) -join ','    
 
-    if ($requiredEnabledCipherSuites -eq $null -or $requiredEnabledCipherSuites.Length -eq 0)
+    if (($requiredEnabledCipherSuites -eq $null -or $requiredEnabledCipherSuites.Length -eq 0) -and $missingCipherSuitesConsideringOS.Length -gt 0)
     {
         Write-nonOK "MITIGATION A: via Local Group Policy setting"
         Write-nonOK "    Run gpedit.msc: "
