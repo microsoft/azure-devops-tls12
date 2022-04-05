@@ -269,7 +269,7 @@ function GetAllCipherSuitesByBCryptAPI
     catch { Write-nonOK "Error when retrieving list of cipher suites by BCript API: $_" }
 }
 
-$gettlsciphersuiteAnalysisDone = $flase
+$gettlsciphersuiteAnalysisDone = $false
 $requiredEnabledCipherSuites = @()
 $allEnabledCipherSuites = @()
 if ($winBuildVersion.Major -ge 10) 
