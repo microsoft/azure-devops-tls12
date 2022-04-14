@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-04-02"
+$version = "2022-04-14"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -101,15 +101,6 @@ function Probe
 
 Probe "status.dev.azure.com" # This domain requires TLS 1.2 with strong cipher suites.
 
-# We're skipping probes to other Azure DevOps domains, because their TLS setting has not been fixed yet:
-# - IPv6 has been switched to TLS 1.2 with strong cipher suites, 
-# - IPv4 is on TLS 1.0+ or TLS 1.2 with strong cipher suites depending on rollout of Legacy TLS deprecation.
-# Therefore, the probe result is function of current date, DNS resolution choice of IPv4 or IPv6 and actual TLS compatibility of the client.
-#
-# Probe "dev.azure.com"
-# Probe "whatever.visualstudio.com"
-
-
 # 
 #
 #
@@ -183,7 +174,7 @@ if ($clientCheckOK)
 else
 {
     Write-nonOK "ISSUE FOUND: TLS 1.2 protocol client usage disabled"
-    Write-nonOK "MITIGATION: per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs" 
+    Write-nonOK "MITIGATION 'regTlsClient': per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs" 
     $mitigations | & { process { Write-nonOK("    $_") } } 
 }
 Write-Break
@@ -299,7 +290,7 @@ if ($winBuildVersion.Major -ge 10)
         Write-nonOK "ISSUE FOUND: None of the TLS 1.2 cipher suites required by Azure DevOps are enabled."
         $gettlsciphersuiteAnalysisDone = $true
     }
-    else 
+    else
     { 
         Write-nonOK "UNEXPECTED ISSUE FOUND: TLS 1.2 does not seem to be supported (no TLS 1.2 cipher suites enabled)" 
         Write-Detail "All enabled cipher suites: $allEnabledCipherSuites"
@@ -341,7 +332,7 @@ else
     if (($requiredEnabledCipherSuites.Length -gt 0) -and $dheFiltered.Length -eq 0) 
     {    
         Write-nonOK "ISSUE FOUND: No TLS 1.2 cipher suites required by Azure DevOps remain enabled after applying Diffie-Hellman disablement."
-        Write-nonOK "MITIGATION: by registry change"
+        Write-nonOK "MITIGATION 'regDHE': by registry change"
         Write-nonOK "    [$dhePath] 'Enabled'=dword:0xFFFFFFFF"
     }
     $requiredEnabledCipherSuites = $dheFiltered
@@ -350,6 +341,17 @@ else
 Write-Break
 
 Write-Detail "Running Group Policy check..."
+
+
+function OutputMitigationToPs1 
+{
+    param ($mitigationId, $script)
+    $fileName = ".\Mitigation-$mitigationId.ps1"
+    $cmt = "# This PowerShell script was generated as a mitigation by Azure DevOps TLS 1.2 transition readiness checker."
+    $lines = @($cmt) + $script
+    $lines | Out-File -FilePath $fileName -Force
+    return $fileName
+}
 
 function GetFunctionsList
 {
@@ -379,22 +381,25 @@ if ($isDefined)
 
     if (($requiredEnabledCipherSuites -eq $null -or $requiredEnabledCipherSuites.Length -eq 0) -and $missingCipherSuitesConsideringOS.Length -gt 0)
     {
-        Write-nonOK "MITIGATION A: via Local Group Policy setting"
+        Write-nonOK "MITIGATION 'gpeditREM': via Local Group Policy setting"
         Write-nonOK "    Run gpedit.msc: "
         Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
         Write-nonOK "    - Choose setting ""SSL Cipher Suite Order"" -> Edit"
         Write-nonOK "    - If 'Enabled' is not checked, then cipher suite setting is possibly enforced by domain GPO (consult domain administrator)"
         Write-nonOK "    - If 'Enabled' is checked:"
         Write-nonOK "      - *either* change to 'Not configured' (resets to OS-default setting)"""
-        Write-nonOK "      - *or* keep 'Enabled' and in field 'SSL Cipher Suites' add items to comma-separated list: $missingCipherSuitesConsideringOS"
+        Write-nonOK "      - *or* keep 'Enabled' and in field 'SSL Cipher Suites' add at least one of the items to comma-separated list: $missingCipherSuitesConsideringOS"
         Write-nonOK "    - Press 'OK' button"
         Write-nonOK "    Restart the computer"
         Write-nonOK ""
-        Write-nonOK "MITIGATION B: via registry change"
-        Write-nonOK "    # Run the below powershell scipt AS ADMINISTRATOR. Restart the computer after the change."
-        Write-nonOK "    [microsoft.win32.registry]::LocalMachine.OpenSubKey(""Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"", `$true).DeleteValue(""Functions"")"
+
+        $scriptFile = OutputMitigationToPs1 "regFunctionsDEL" "[microsoft.win32.registry]::LocalMachine.OpenSubKey(""Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"", `$true).DeleteValue(""Functions"")"
+        Write-nonOK "MITIGATION 'regFunctionsDEL': deletion of registry item HKLM:\Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002!Functions"
+        Write-nonOK "    Mitigation script generated at $scriptFile"
+        Write-nonOK "    Run the mitigation script as Administrator and restart the computer."
         Write-nonOK ""
-        Write-nonOK "MITIGATION C: if the above does not work (or works temporarily) ask your domain administrator if the cipher suites are enforced via domain GPO."        
+
+        Write-nonOK "MITIGATION 'GPO': if the above mitigations do not help (or help temporarily) ask your domain administrator if the cipher suites are enforced via domain GPO."
     }
     else
     {
@@ -409,21 +414,24 @@ else
         
         if ($winBuildVersion.Major -ge 10) 
         {
-            Write-nonOK "MITIGATION A: per https://docs.microsoft.com/en-us/powershell/module/tls/enable-tlsciphersuite?view=windowsserver2022-ps"
-            Write-nonOK "    # Run the below powershell scipt AS ADMINISTRATOR. Restart the readiness checker scipt in new PowerShell console to see effects."
-            Write-nonOK "    # Continue to mitigations B/C only if all the below calls return 'Not Effective'"
-            $requiredTls12CipherSuites | & { process { Write-NonOK "    Enable-TlsCipherSuite -Name $_; if (Get-TlsCipherSuite -Name $_) {'Enabled!'} else {'Not effective.'}" } }
+            $script = $requiredTls12CipherSuites | & { process { "Enable-TlsCipherSuite -Name $_; if (Get-TlsCipherSuite -Name $_) {'Enabled!'} else {'Not effective.'}" } }
+            $scriptFile = OutputMitigationToPs1 "EnableTLS" $script
+            Write-nonOK "MITIGATION 'cmdletEnable': per https://docs.microsoft.com/en-us/powershell/module/tls/enable-tlsciphersuite?view=windowsserver2022-ps"
+            Write-nonOK "    Mitigation script generated at $scriptFile"
+            Write-nonOK "    Run the mitigation script as Administrator:"
+            Write-nonOK "    - If any line printed is 'Enabled!' then this mitigation was effective."
+            Write-nonOK "    - If all the lines printed are 'Not Effective' then continue with applying further mitigations listed below."
             Write-nonOK ""
         }
         else
         {
-            Write-nonOK "MITIGATION A: omitted (not supported by the OS)"
+            Write-nonOK "MITIGATION 'cmdletEnable': omitted (not supported by the OS)"
             Write-nonOK ""
         }
 
         $suggestedFunctionsContent = ($expectedCipherSuitesConsideringOS + $allEnabledCipherSuites) -join ','
-
-        Write-nonOK "MITIGATION B: create an override via Local Group Policy setting"
+        
+        Write-nonOK "MITIGATION 'gpeditSET': create an override via Local Group Policy setting"
         Write-nonOK "    Run gpedit.msc: "
         Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
         Write-nonOK "    - Choose setting ""SSL Cipher Suite Order"" -> Edit"
@@ -432,9 +440,11 @@ else
         Write-nonOK "    - Press 'OK' button"
         Write-nonOK "    Restart the computer"
         Write-nonOK ""
-        Write-nonOK "MITIGATION C: via registry change"
-        Write-nonOK "    # Run the below powershell scipt AS ADMINISTRATOR, RESTART the computer after change."
-        Write-nonOK "    [microsoft.win32.registry]::SetValue(""HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"", ""Functions"",""$suggestedFunctionsContent"")"
+
+        $scriptFile = OutputMitigationToPs1 "regFunctionsSET" "[microsoft.win32.registry]::SetValue(""HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"", ""Functions"",""$suggestedFunctionsContent"")"
+        Write-nonOK "MITIGATION 'regFunctionsSET': setting cipher suite list via registry at HKLM:\Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002!Functions"
+        Write-nonOK "    Mitigation script generated at $scriptFile"
+        Write-nonOK "    Run the mitigation script as Administrator and restart the computer."
     }
     else
     {
@@ -496,7 +506,6 @@ function CheckStrongCrypto
     }
 }
 
-Write-Info "If you do not use legacy .NET applications you can ignore below warnings (if any detected). Always fix issues found in the above OS-based analysis first."
 $mitigations = @()
 $mitigations = $mitigations + (CheckStrongCrypto "HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319" ".NET Framework 4.0/4.5.x")
 $mitigations = $mitigations + (CheckStrongCrypto "HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework\v4.0.30319" ".NET Framework 4.0/4.5.x (32bit app on 64bit OS)")
@@ -505,6 +514,11 @@ $mitigations = $mitigations + (CheckStrongCrypto "HKLM:\SOFTWARE\Wow6432Node\Mic
 $mitigations = $mitigations | Where-Object { $_ -ne $null } 
 if ($mitigations.Count -gt 0)
 {
+    Write-Info "Follow the below mitigations when the OS analysis is without issues and there are still applications with TLS-connectivity issues on the computer."
     Write-Warning "MITIGATIONS: per https://docs.microsoft.com/en-us/mem/configmgr/core/plan-design/security/enable-tls-1-2-client"
     $mitigations | & { process { Write-Warning "    $_" } } 
+}
+else
+{
+    Write-OK "All mitigations required to ensure TLS 1.2-compatibility of legacy .NET applications are in place."
 }
