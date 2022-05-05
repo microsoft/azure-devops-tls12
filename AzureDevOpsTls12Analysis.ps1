@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-04-14"
+$version = "2022-05-05"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -317,31 +317,6 @@ if (-not $gettlsciphersuiteAnalysisDone)
     Write-Break
 }
 
-Write-Detail "Running DHE check..."
-
-$dhePath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\Diffie-Hellman"
-$dheIsExpected = CheckValueIsExpected $dhePath "Enabled" 4294967295 $true $exactCheck
-if ($dheIsExpected)
-{
-    Write-Detail "Diffie-Helman key exchange allowed."
-}
-else
-{    
-    $dheFiltered = $requiredEnabledCipherSuites | Where-Object { -not ($_ -match "_DHE_") }
-    Write-Host "Diffie-Helman key exchange disabled. Enabled cipher suites after filtering: $dheFiltered"
-    if (($requiredEnabledCipherSuites.Length -gt 0) -and $dheFiltered.Length -eq 0) 
-    {    
-        Write-nonOK "ISSUE FOUND: No TLS 1.2 cipher suites required by Azure DevOps remain enabled after applying Diffie-Hellman disablement."
-        Write-nonOK "MITIGATION 'regDHE': by registry change"
-        Write-nonOK "    [$dhePath] 'Enabled'=dword:0xFFFFFFFF"
-    }
-    $requiredEnabledCipherSuites = $dheFiltered
-}
-
-Write-Break
-
-Write-Detail "Running Group Policy check..."
-
 
 function OutputMitigationToPs1 
 {
@@ -352,6 +327,48 @@ function OutputMitigationToPs1
     $lines | Out-File -FilePath $fileName -Force
     return $fileName
 }
+
+Write-Detail "Running Key-Exchange check..."
+
+function CheckKeyExchangeEnabled
+{
+    param ($name, $path, $ciphersuiteSegment, $enabledCipherSuites)
+
+    $enabledValue = [System.Convert]::ToUInt32("FFFFFFFF", 16)
+    $isExpected = CheckValueIsExpected $path "Enabled" $enabledValue $true $exactCheck
+    if ($isExpected)
+    {
+        Write-Detail "$name key exchange allowed."
+        return $enabledCipherSuites
+    }
+    else
+    {    
+        $filtered = $enabledCipherSuites | Where-Object { -not ($_ -match $ciphersuiteSegment) }
+        Write-Host "$name key exchange disabled. Enabled cipher suites after filtering: $filtered"
+        if (($enabledCipherSuites.Length -gt 0) -and $filtered.Length -eq 0) 
+        {    
+            Write-nonOK "ISSUE FOUND: No TLS 1.2 cipher suites required by Azure DevOps remain enabled after applying $name disablement."
+
+            $fmtpath = $path.replace("HKLM:\", "HKEY_LOCAL_MACHINE\")
+            $scriptFile = OutputMitigationToPs1 "RegKeyEx" "[microsoft.win32.registry]::SetValue(""$fmtpath"", ""Enabled"", 0xFFFFFFFF)"
+            Write-nonOK "MITIGATION 'RegKeyEx': enabling of Key-Exchange schema at $path!Enabled"
+            Write-nonOK "    Mitigation script generated at $scriptFile"
+            Write-nonOK "    Run the mitigation script as Administrator and restart the computer."
+        }
+        return $filtered
+    }
+}
+
+$requiredEnabledCipherSuites = CheckKeyExchangeEnabled "Diffie-Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\Diffie-Hellman" "_DHE_" $requiredEnabledCipherSuites
+
+if ($winBuildVersion.Major -ge 10) 
+{ 
+    $requiredEnabledCipherSuites = CheckKeyExchangeEnabled "Elliptic-curve Diffie–Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\ECDH" "_ECDHE_" $requiredEnabledCipherSuites
+}
+
+Write-Break
+
+Write-Detail "Running Group Policy check..."
 
 function GetFunctionsList
 {
