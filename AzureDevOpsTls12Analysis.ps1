@@ -350,8 +350,8 @@ function CheckKeyExchangeEnabled
             Write-nonOK "ISSUE FOUND: No TLS 1.2 cipher suites required by Azure DevOps remain enabled after applying $name disablement."
 
             $fmtpath = $path.replace("HKLM:\", "HKEY_LOCAL_MACHINE\")
-            $scriptFile = OutputMitigationToPs1 "RegKeyEx" "[microsoft.win32.registry]::SetValue(""$fmtpath"", ""Enabled"", 0xFFFFFFFF)"
-            Write-nonOK "MITIGATION 'RegKeyEx': enabling of Key-Exchange schema at $path!Enabled"
+            $scriptFile = OutputMitigationToPs1 "regKeyEx" "[microsoft.win32.registry]::SetValue(""$fmtpath"", ""Enabled"", 0xFFFFFFFF)"
+            Write-nonOK "MITIGATION 'regKeyEx': enabling of Key-Exchange schema at $path!Enabled"
             Write-nonOK "    Mitigation script generated at $scriptFile"
             Write-nonOK "    Run the mitigation script as Administrator and restart the computer."
         }
@@ -359,11 +359,11 @@ function CheckKeyExchangeEnabled
     }
 }
 
-$requiredEnabledCipherSuites = CheckKeyExchangeEnabled "Diffie-Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\Diffie-Hellman" "_DHE_" $requiredEnabledCipherSuites
+$keyexchangeFilteredCipherSuites = CheckKeyExchangeEnabled "Diffie-Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\Diffie-Hellman" "_DHE_" $requiredEnabledCipherSuites
 
 if ($winBuildVersion.Major -ge 10) 
 { 
-    $requiredEnabledCipherSuites = CheckKeyExchangeEnabled "Elliptic-curve Diffie–Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\ECDH" "_ECDHE_" $requiredEnabledCipherSuites
+    $keyexchangeFilteredCipherSuites = CheckKeyExchangeEnabled "Elliptic-curve Diffie–Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\ECDH" "_ECDHE_" $keyexchangeFilteredCipherSuites
 }
 
 Write-Break
