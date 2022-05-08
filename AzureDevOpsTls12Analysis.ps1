@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-05-05"
+$version = "2022-05-08"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -191,6 +191,10 @@ $minimallySupportedTls12CipherSuites = (
     "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384",
     "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256"
 )
+$requiredEccs = (
+    "NistP256",
+    "NistP384"
+)
 
 function GetAllCipherSuitesByBCryptAPI
 {
@@ -265,7 +269,7 @@ $requiredEnabledCipherSuites = @()
 $allEnabledCipherSuites = @()
 if ($winBuildVersion.Major -ge 10) 
 {
-    Write-Detail "Running Get-TlsCipherCuite check..."
+    Write-Detail "Running Cipher Suite check (Get-TlsCipherCuite)..."
 
     $allEnabledCipherSuiteObjs = Get-TlsCipherSuite
     $allEnabledCipherSuites = $allEnabledCipherSuiteObjs.Name
@@ -282,12 +286,12 @@ if ($winBuildVersion.Major -ge 10)
 
     if ($requiredEnabledCipherSuites)
     { 
-        Write-OK "At least one of the TLS 1.2 cipher suites required by Azure DevOps enabled on the machine."        
+        Write-OK "Cipher Suite check passed: at least one of the TLS 1.2 cipher suites supported by Azure DevOps is enabled."
         $gettlsciphersuiteAnalysisDone = $true
     }
     elseif ($tls12EnabledCipherSuites) 
     {
-        Write-nonOK "ISSUE FOUND: None of the TLS 1.2 cipher suites required by Azure DevOps are enabled."
+        Write-nonOK "ISSUE FOUND: None of the TLS 1.2 cipher suites supported by Azure DevOps are enabled."
         $gettlsciphersuiteAnalysisDone = $true
     }
     else
@@ -301,17 +305,17 @@ if ($winBuildVersion.Major -ge 10)
 
 if (-not $gettlsciphersuiteAnalysisDone)
 {
-    Write-Detail "Running BCrypt check..."
+    Write-Detail "Running Cipher Suite check (BCrypt)..."
     $allEnabledCipherSuites = GetAllCipherSuitesByBCryptAPI
     $requiredEnabledCipherSuites = $requiredTls12CipherSuites | Where-Object { $allEnabledCipherSuites -contains $_ }
     if ($requiredEnabledCipherSuites)
     {
-        Write-OK "At least one of the TLS 1.2 cipher suites required by Azure DevOps enabled on the machine."
+        Write-OK "At least one of the TLS 1.2 cipher suites supported by Azure DevOps enabled on the machine."
         Write-Detail "Matching cipher suites: $requiredEnabledCipherSuites"
     }
     else
     {
-        Write-nonOK "ISSUE FOUND: None of the TLS 1.2 cipher suites required by Azure DevOps are enabled."
+        Write-nonOK "ISSUE FOUND: None of the TLS 1.2 cipher suites supported by Azure DevOps are enabled."
         Write-Detail "All enabled cipher suites: $allEnabledCipherSuites"
     }
     Write-Break
@@ -328,7 +332,7 @@ function OutputMitigationToPs1
     return $fileName
 }
 
-Write-Detail "Running Key-Exchange check..."
+Write-Detail "Running Key Exchange check..."
 
 function CheckKeyExchangeEnabled
 {
@@ -344,16 +348,23 @@ function CheckKeyExchangeEnabled
     else
     {    
         $filtered = $enabledCipherSuites | Where-Object { -not ($_ -match $ciphersuiteSegment) }
-        Write-Host "$name key exchange disabled. Enabled cipher suites after filtering: $filtered"
-        if (($enabledCipherSuites.Length -gt 0) -and $filtered.Length -eq 0) 
-        {    
-            Write-nonOK "ISSUE FOUND: No TLS 1.2 cipher suites required by Azure DevOps remain enabled after applying $name disablement."
+        if ($enabledCipherSuites.Length -eq $filtered.Length)
+        {
+            Write-Detail "$name key exchange disabled but none of the enabled cipher suites requires it anyway"
+        }
+        else
+        {
+            Write-Warning "WARNING: $name key exchange disabled. Enabled cipher suites after filtering: $filtered"
+            if ($filtered.Length -eq 0)
+            {    
+                Write-nonOK "ISSUE FOUND: No TLS 1.2 cipher suites required by Azure DevOps remain enabled after applying $name disablement."
 
-            $fmtpath = $path.replace("HKLM:\", "HKEY_LOCAL_MACHINE\")
-            $scriptFile = OutputMitigationToPs1 "regKeyEx" "[microsoft.win32.registry]::SetValue(""$fmtpath"", ""Enabled"", 0xFFFFFFFF)"
-            Write-nonOK "MITIGATION 'regKeyEx': enabling of Key-Exchange schema at $path!Enabled"
-            Write-nonOK "    Mitigation script generated at $scriptFile"
-            Write-nonOK "    Run the mitigation script as Administrator and restart the computer."
+                $fmtpath = $path.replace("HKLM:\", "HKEY_LOCAL_MACHINE\")
+                $scriptFile = OutputMitigationToPs1 "regKeyEx" "[microsoft.win32.registry]::SetValue(""$fmtpath"", ""Enabled"", 0xFFFFFFFF)"
+                Write-nonOK "MITIGATION 'regKeyEx': enabling of Key-Exchange schema at $path!Enabled"
+                Write-nonOK "    Mitigation script generated at $scriptFile"
+                Write-nonOK "    Run the mitigation script as Administrator and restart the computer."
+            }
         }
         return $filtered
     }
@@ -365,6 +376,80 @@ if ($winBuildVersion.Major -ge 10)
 { 
     $keyexchangeFilteredCipherSuites = CheckKeyExchangeEnabled "Elliptic-curve Diffie–Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\ECDH" "_ECDHE_" $keyexchangeFilteredCipherSuites
 }
+
+if ($keyexchangeFilteredCipherSuites.Length -gt 0)
+{
+    
+    Write-OK "Key Exchange check passed."
+}
+
+Write-Break
+
+
+Write-Detail "Running Elliptic Curve check..."
+
+if ($winBuildVersion.Major -lt 10)
+{
+    Write-Detail "Skipping elliptic curve check due to OS version..."
+}
+else
+{
+    $allEnabledEccs = Get-TlsEccCurve
+    Write-Detail "All enabled elliptic curves: $allEnabledEccs"
+    $matchingEccs = $allEnabledEccs | Where-Object { $requiredEccs -contains $_ }
+    Write-Detail "Matching elliptic curves: $matchingEccs"
+    $ecdheCipherSuites = $keyexchangeFilteredCipherSuites | Where-Object { $_ -match "TLS_ECDH" }
+    
+    if ($matchingEccs.Length -gt 0)
+    {
+        Write-OK "Elliptic curve check passed: at least one elliptic curve supported by Azure DevOps is enabled"
+        $eccFilteredCipherSuites = $keyexchangeFilteredCipherSuites
+    }
+    else
+    {
+        $eccFilteredCipherSuites = $keyexchangeFilteredCipherSuites | Where-Object { $ecdheCipherSuites -notcontains $_}        
+        $reasonMsg = "All elliptic curves supported by Azure DevOps are disabled. This makes ECDHE cipher suites unusable for connection."
+        if ($keyexchangeFilteredCipherSuites.Length -gt 0 -and $eccFilteredCipherSuites.Length -eq 0)
+        {
+            Write-nonOK "ISSUE FOUND: $reasonMsg There are no enabled cipher suites left."
+            
+            $script = $requiredEccs | & { process { "Enable-TlsEccCurve -Name $_; if (Get-TlsEccCurve -Name $_) {'Enabled!'} else {'Not effective.'}" } }
+            $scriptFile = OutputMitigationToPs1 "EccEnable" $script
+            Write-nonOK "MITIGATION 'cmdletEccEnable': https://docs.microsoft.com/de-ch/powershell/module/tls/enable-tlsecccurve"
+            Write-nonOK "    Mitigation script generated at $scriptFile"
+            Write-nonOK "    Run the mitigation script as Administrator:"
+            Write-nonOK "    - If any line printed is 'Enabled!' then this mitigation was effective."
+            Write-nonOK "    - If all the lines printed are 'Not Effective' then continue with applying further mitigations listed below."
+            Write-nonOK ""
+
+            $suggestedFunctionsContent = ($expectedCipherSuitesConsideringOS + $allEnabledCipherSuites) -join ','
+        
+            Write-nonOK "MITIGATION 'gpeditEccSET': edit an override via Local Group Policy setting"
+            Write-nonOK "    Run gpedit.msc: "
+            Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
+            Write-nonOK "    - Choose setting ""ECC Curve Order"" -> Edit"
+            Write-nonOK "    - If 'Enabled' is not checked, then ellptic curve setting is possibly enforced by domain GPO (consult domain administrator)"
+            Write-nonOK "    - If 'Enabled' is checked:"
+            Write-nonOK "      - *either* change to 'Not configured' (resets to OS-default setting)"""
+            Write-nonOK "      - *or* keep 'Enabled' and in field 'ECC Curve Order' add at least one of the items: $requiredEccs"        
+            Write-nonOK "    - Press 'OK' button"
+            Write-nonOK "    Restart the computer"
+            Write-nonOK ""
+        }
+        else 
+        {
+            if ($keyexchangeFilteredCipherSuites.Length -lt $eccFilteredCipherSuites.Length)
+            {
+                Write-Warning "WARNING: $reasonMsg Remaining cipher suites: $eccFilteredCipherSuites"
+            }
+            else
+            {
+                Write-Warning "WARNING: $reasonMsg This has no effect here because ECDHE cipher suites are not enabled."
+            }
+        }
+    }
+}
+
 
 Write-Break
 
@@ -468,6 +553,9 @@ else
         Write-Detail "No Group Policy cipher suites override defined. No need to create the GP override since cipher suites required by Azure DevOps are already enabled."
     }
 }
+
+
+
 
 #
 #
