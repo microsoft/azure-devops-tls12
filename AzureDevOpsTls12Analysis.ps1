@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-05-08"
+$version = "2022-05-09"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -336,6 +336,16 @@ function GetFunctionsList
     return ($false, @())
 }
 
+function OutputMitigationToPs1 
+{
+    param ($mitigationId, $script)
+    $fileName = ".\Mitigation-$mitigationId.ps1"
+    $cmt = "# This PowerShell script was generated as a mitigation by Azure DevOps TLS 1.2 transition readiness checker."
+    $lines = @($cmt) + $script
+    $lines | Out-File -FilePath $fileName -Force
+    return $fileName
+}
+
 
 $expectedCipherSuitesConsideringOS = if ($winBuildVersion.Major -lt 10) { $minimallySupportedTls12CipherSuites } else { $requiredTls12CipherSuites }
 $gpolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"
@@ -423,17 +433,6 @@ else
 }
 
 Write-Break
-
-
-function OutputMitigationToPs1 
-{
-    param ($mitigationId, $script)
-    $fileName = ".\Mitigation-$mitigationId.ps1"
-    $cmt = "# This PowerShell script was generated as a mitigation by Azure DevOps TLS 1.2 transition readiness checker."
-    $lines = @($cmt) + $script
-    $lines | Out-File -FilePath $fileName -Force
-    return $fileName
-}
 
 Write-Detail "Running Key Exchange check..."
 
