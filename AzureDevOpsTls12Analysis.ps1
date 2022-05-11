@@ -416,7 +416,9 @@ else
         Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
         Write-nonOK "    - Choose setting ""SSL Cipher Suite Order"" -> Edit"
         Write-nonOK "    - Set as 'Enabled'"
-        Write-nonOK "    - Set 'SSL Cipher Suites' to value (without quotes): ""$suggestedFunctionsContent"""
+        Write-nonOK "    - 'SSL Cipher Suites' field pre-populates with comma-separated list of cipher suites."
+        Write-nonOK "    - If the list does not contain any of the following cipher suites, then insert at least one of them:"
+        foreach ($cs in $expectedCipherSuitesConsideringOS) { Write-nonOK "        $cs" }
         Write-nonOK "    - Press 'OK' button"
         Write-nonOK "    Restart the computer"
         Write-nonOK ""
