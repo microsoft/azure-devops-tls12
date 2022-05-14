@@ -405,13 +405,13 @@ else
         }
         else
         {
-            Write-nonOK "MITIGATION 'cmdletEnable': omitted (not supported by the OS)"
+            Write-nonOK "MITIGATION 'cmdletEnable': mitigation omitted (not supported by the OS)"
             Write-nonOK ""
         }
 
         $suggestedFunctionsContent = ($expectedCipherSuitesConsideringOS + $allEnabledCipherSuites) -join ','
         
-        Write-nonOK "MITIGATION 'gpeditSET': create an override via Local Group Policy setting"
+        Write-nonOK "MITIGATION 'gpeditSET' (apply if the 'cmdletEnable' doesn't help or not applicable): create an override via Local Group Policy setting"
         Write-nonOK "    Run gpedit.msc: "
         Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
         Write-nonOK "    - Choose setting ""SSL Cipher Suite Order"" -> Edit"
@@ -424,9 +424,17 @@ else
         Write-nonOK ""
 
         $scriptFile = OutputMitigationToPs1 "regFunctionsSET" "[microsoft.win32.registry]::SetValue(""HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"", ""Functions"",""$suggestedFunctionsContent"")"
-        Write-nonOK "MITIGATION 'regFunctionsSET': setting cipher suite list via registry at HKLM:\Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002!Functions"
+        Write-nonOK "MITIGATION 'regFunctionsSET' (apply if non of the above helps): setting cipher suite list via registry at HKLM:\Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002!Functions"
         Write-nonOK "    Mitigation script generated at $scriptFile"
         Write-nonOK "    Run the mitigation script as Administrator and restart the computer."
+        Write-nonOK ""
+
+        if ($winBuildVersion.Major -lt 10)
+        {
+            Write-nonOK "MITIGATION 'updateOS': your OS may lack updates required to add support for the needed cipher suites."
+            Write-nonOK "    - Win 8.1, Win Server 2012 R2: update 2919355 required, see https://docs.microsoft.com/en-us/windows/win32/secauthn/tls-cipher-suites-in-windows-8-1"
+            Write-nonOK "    - Win 7, Win Server 2008 R2 - 2012: see https://support.microsoft.com/en-us/topic/update-to-enable-tls-1-1-and-tls-1-2-as-default-secure-protocols-in-winhttp-in-windows-c4bd73d2-31d7-761e-0178-11268bb10392"
+        }
     }
     else
     {
@@ -522,13 +530,13 @@ else
             Write-nonOK "MITIGATION 'cmdletEccEnable': https://docs.microsoft.com/de-ch/powershell/module/tls/enable-tlsecccurve"
             Write-nonOK "    Mitigation script generated at $scriptFile"
             Write-nonOK "    Run the mitigation script as Administrator:"
-            Write-nonOK "    - If any line printed is 'Enabled!' then this mitigation was effective."
-            Write-nonOK "    - If all the lines printed are 'Not Effective' then continue with applying further mitigations listed below."
+            Write-nonOK "    - If any printed line is 'Enabled!' then this mitigation was effective."
+            Write-nonOK "    - If all the printed lines are 'Not Effective' then continue with applying the mitigation below."
             Write-nonOK ""
 
             $suggestedFunctionsContent = ($expectedCipherSuitesConsideringOS + $allEnabledCipherSuites) -join ','
         
-            Write-nonOK "MITIGATION 'gpeditEccSET': edit an override via Local Group Policy setting"
+            Write-nonOK "MITIGATION 'gpeditEccSET' (try if 'cmdletEccEnable' doesn't help): edit an override via Local Group Policy setting"
             Write-nonOK "    Run gpedit.msc: "
             Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
             Write-nonOK "    - Choose setting ""ECC Curve Order"" -> Edit"
