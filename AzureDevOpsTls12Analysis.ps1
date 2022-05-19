@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-05-09"
+$version = "2022-05-19"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -613,7 +613,12 @@ function CheckStrongCrypto
     else
     {
         Write-Warning "Warning: TLS 1.2 not enforced for applications targetting $desc"
-        return "[$path] 'SchUseStrongCrypto'=dword:1, 'SystemDefaultTlsVersions'=dword:1"
+        
+        $fmtpath = $path.replace("HKLM:\", "HKEY_LOCAL_MACHINE\")
+        return @"
+[microsoft.win32.registry]::SetValue("$fmtpath", "SchUseStrongCrypto", 1)
+[microsoft.win32.registry]::SetValue("$fmtpath", "SystemDefaultTlsVersions", 1)
+"@
     }
 }
 
@@ -625,9 +630,12 @@ $mitigations = $mitigations + (CheckStrongCrypto "HKLM:\SOFTWARE\Wow6432Node\Mic
 $mitigations = $mitigations | Where-Object { $_ -ne $null } 
 if ($mitigations.Count -gt 0)
 {
+    $scriptFile = OutputMitigationToPs1 "netFramework" $mitigations
+    
     Write-Info "Follow the below mitigations when the OS analysis is without issues and there are still applications with TLS-connectivity issues on the computer."
-    Write-Warning "MITIGATIONS: per https://docs.microsoft.com/en-us/mem/configmgr/core/plan-design/security/enable-tls-1-2-client"
-    $mitigations | & { process { Write-Warning "    $_" } } 
+    Write-Warning "MITIGATIONS: per https://docs.microsoft.com/en-us/mem/configmgr/core/plan-design/security/enable-tls-1-2-client"    
+    Write-Warning "    Mitigation script generated at $scriptFile"
+    Write-Warning "    Run the mitigation script as Administrator and restart the computer."
 }
 else
 {
