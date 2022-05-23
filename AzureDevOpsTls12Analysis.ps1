@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-05-19"
+$version = "2022-05-23"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -459,10 +459,10 @@ function CheckKeyExchangeEnabled
     }
     else
     {    
-        $filtered = $enabledCipherSuites | Where-Object { -not ($_ -match $ciphersuiteSegment) }
+        $filtered = $enabledCipherSuites | Where-Object { -not ($_ -match "_$($ciphersuiteSegment)_") }
         if ($enabledCipherSuites.Length -eq $filtered.Length)
         {
-            Write-Detail "$name key exchange disabled but none of the enabled cipher suites requires it anyway"
+            Write-Detail "$name key exchange disabled but none of the enabled cipher suites requires it anyway."
         }
         else
         {
@@ -472,8 +472,17 @@ function CheckKeyExchangeEnabled
                 Write-nonOK "ISSUE FOUND: No TLS 1.2 cipher suites required by Azure DevOps remain enabled after applying $name disablement."
 
                 $fmtpath = $path.replace("HKLM:\", "HKEY_LOCAL_MACHINE\")
-                $scriptFile = OutputMitigationToPs1 "regKeyEx" "[microsoft.win32.registry]::SetValue(""$fmtpath"", ""Enabled"", 0xFFFFFFFF)"
-                Write-nonOK "MITIGATION 'regKeyEx': enabling of Key-Exchange schema at $path!Enabled"
+                $mitigationCode = @("[microsoft.win32.registry]::SetValue(""$fmtpath"", ""Enabled"", 0xFFFFFFFF)")
+
+                if ($ciphersuiteSegment -eq "DHE")
+                {
+                    # https://docs.microsoft.com/en-us/security-updates/securityadvisories/2016/3174644
+                    $mitigationCode += "[microsoft.win32.registry]::SetValue(""$fmtpath"", ""ServerMinKeyBitLength"", 0x00000800)"
+                }
+
+                $mitigationName = "reg$ciphersuiteSegment"
+                $scriptFile = OutputMitigationToPs1 $mitigationName $mitigationCode
+                Write-nonOK "MITIGATION '$mitigationName': enabling of key exchange schema $name in registry."
                 Write-nonOK "    Mitigation script generated at $scriptFile"
                 Write-nonOK "    Run the mitigation script as Administrator and restart the computer."
             }
@@ -482,16 +491,15 @@ function CheckKeyExchangeEnabled
     }
 }
 
-$keyexchangeFilteredCipherSuites = CheckKeyExchangeEnabled "Diffie-Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\Diffie-Hellman" "_DHE_" $requiredEnabledCipherSuites
+$keyexchangeFilteredCipherSuites = CheckKeyExchangeEnabled "Diffie-Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\Diffie-Hellman" "DHE" $requiredEnabledCipherSuites
 
 if ($winBuildVersion.Major -ge 10) 
 { 
-    $keyexchangeFilteredCipherSuites = CheckKeyExchangeEnabled "Elliptic-curve Diffie–Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\ECDH" "_ECDHE_" $keyexchangeFilteredCipherSuites
+    $keyexchangeFilteredCipherSuites = CheckKeyExchangeEnabled "Elliptic-curve Diffie–Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\ECDH" "ECDHE" $keyexchangeFilteredCipherSuites
 }
 
 if ($keyexchangeFilteredCipherSuites.Length -gt 0)
 {
-    
     Write-OK "Key Exchange check passed."
 }
 
