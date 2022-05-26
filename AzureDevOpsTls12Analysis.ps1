@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-05-23"
+$version = "2022-05-26"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -160,7 +160,7 @@ if (($winBuildVersion.Major -lt 6) -or ($winBuildVersion.Major -eq 6 -and $winBu
     # source: https://support.microsoft.com/en-us/topic/update-to-enable-tls-1-1-and-tls-1-2-as-default-secure-protocols-in-winhttp-in-windows-c4bd73d2-31d7-761e-0178-11268bb10392
     # source: https://support.microsoft.com/en-us/topic/update-to-add-support-for-tls-1-1-and-tls-1-2-in-windows-server-2008-sp2-windows-embedded-posready-2009-and-windows-embedded-standard-2009-b6ab553a-fa8f-3f5e-287c-e752eb3ce5f4
     Write-Detail "For old Windows versions (WS 2012, Windows 7 and older) TLS 1.2 must be explicitly enabled..."
-    $undefinedMeansEnabled = $false 
+    $undefinedMeansEnabled = $false
 }
 if (-not (CheckValueIsExpected $tls12ClientPath "DisabledByDefault" 0 $undefinedMeansEnabled $boolCheck))
 {
@@ -195,6 +195,8 @@ $requiredEccs = (
     "NistP256",
     "NistP384"
 )
+
+$expectedCipherSuitesConsideringOS = if ($winBuildVersion.Major -lt 10) { $minimallySupportedTls12CipherSuites } else { $requiredTls12CipherSuites }
 
 function GetAllCipherSuitesByBCryptAPI
 {
@@ -307,16 +309,23 @@ if (-not $gettlsciphersuiteAnalysisDone)
 {
     Write-Detail "Running Cipher Suite check (BCrypt)..."
     $allEnabledCipherSuites = GetAllCipherSuitesByBCryptAPI
+    Write-Detail "All enabled cipher suites: $allEnabledCipherSuites"
     $requiredEnabledCipherSuites = $requiredTls12CipherSuites | Where-Object { $allEnabledCipherSuites -contains $_ }
+    $unsupportedEnabledCipherSuites = $requiredEnabledCipherSuites | Where-Object { $expectedCipherSuitesConsideringOS -notcontains $_ }
+    if ($unsupportedEnabledCipherSuites)
+    {
+        Write-Warning "Warning: Excluding TLS 1.2 cipher suites which are supported by Azure DevOps but not working on this version of the OS: $unsupportedEnabledCipherSuites"
+        $requiredEnabledCipherSuites = $requiredEnabledCipherSuites | Where-Object { $expectedCipherSuitesConsideringOS -contains $_ }
+    }
+
     if ($requiredEnabledCipherSuites)
     {
-        Write-OK "At least one of the TLS 1.2 cipher suites supported by Azure DevOps enabled on the machine."
+        Write-OK "At least one of the TLS 1.2 cipher suites supported by Azure DevOps enabled at the machine."
         Write-Detail "Matching cipher suites: $requiredEnabledCipherSuites"
     }
     else
     {
         Write-nonOK "ISSUE FOUND: None of the TLS 1.2 cipher suites supported by Azure DevOps are enabled."
-        Write-Detail "All enabled cipher suites: $allEnabledCipherSuites"
     }
     Write-Break
 }
@@ -346,8 +355,6 @@ function OutputMitigationToPs1
     return $fileName
 }
 
-
-$expectedCipherSuitesConsideringOS = if ($winBuildVersion.Major -lt 10) { $minimallySupportedTls12CipherSuites } else { $requiredTls12CipherSuites }
 $gpolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"
 ($isDefined, $allowedCipherSuitesListPerGroupPolicy) = GetFunctionsList $gpolicyPath
 
