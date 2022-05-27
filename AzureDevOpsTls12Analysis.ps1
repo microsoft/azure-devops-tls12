@@ -314,13 +314,13 @@ if (-not $gettlsciphersuiteAnalysisDone)
     $unsupportedEnabledCipherSuites = $requiredEnabledCipherSuites | Where-Object { $expectedCipherSuitesConsideringOS -notcontains $_ }
     if ($unsupportedEnabledCipherSuites)
     {
-        Write-Warning "Warning: Excluding TLS 1.2 cipher suites which are supported by Azure DevOps but not working on this version of the OS: $unsupportedEnabledCipherSuites"
+        Write-Warning "Warning: Excluding TLS 1.2 cipher suites which are supported by Azure DevOps but not working on this OS version: $unsupportedEnabledCipherSuites"
         $requiredEnabledCipherSuites = $requiredEnabledCipherSuites | Where-Object { $expectedCipherSuitesConsideringOS -contains $_ }
     }
 
     if ($requiredEnabledCipherSuites)
     {
-        Write-OK "At least one of the TLS 1.2 cipher suites supported by Azure DevOps enabled at the machine."
+        Write-OK "At least one of the TLS 1.2 cipher suites supported by Azure DevOps is enabled and working."
         Write-Detail "Matching cipher suites: $requiredEnabledCipherSuites"
     }
     else
@@ -517,7 +517,7 @@ Write-Detail "Running Elliptic Curve check..."
 
 if ($winBuildVersion.Major -lt 10)
 {
-    Write-Detail "Skipping elliptic curve check due to OS version..."
+    Write-Detail "Skipping elliptic curve check due to OS version."
 }
 else
 {
