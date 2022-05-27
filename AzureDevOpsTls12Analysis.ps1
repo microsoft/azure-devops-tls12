@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-05-26"
+$version = "2022-05-27"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -347,10 +347,11 @@ function GetFunctionsList
 
 function OutputMitigationToPs1 
 {
-    param ($mitigationId, $script)
+    param ($mitigationId, $script, $printDone = $true)
     $fileName = ".\Mitigation-$mitigationId.ps1"
     $cmt = "# This PowerShell script was generated as a mitigation by Azure DevOps TLS 1.2 transition readiness checker."
-    $lines = @($cmt) + $script + @("'Done!'")
+    $lines = @($cmt) + $script
+    if ($printDone) { $lines += @("'Done!'") }
     $lines | Out-File -FilePath $fileName -Force
     return $fileName
 }
@@ -372,21 +373,35 @@ if ($isDefined)
         Write-nonOK "    Run gpedit.msc: "
         Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
         Write-nonOK "    - Choose setting ""SSL Cipher Suite Order"" -> Edit"
-        Write-nonOK "    - If 'Enabled' is not checked, then cipher suite setting is possibly enforced by domain GPO (consult domain administrator)"
+        Write-nonOK "    - If 'Enabled' is not checked, then continue to the next mitigation below."
         Write-nonOK "    - If 'Enabled' is checked:"
         Write-nonOK "      - *either* change to 'Not configured' (resets to OS-default setting)"""
-        Write-nonOK "      - *or* keep 'Enabled' and in field 'SSL Cipher Suites' add at least one of the items to comma-separated list: $missingCipherSuitesConsideringOS"
+        Write-nonOK "      - *or* keep 'Enabled' and in field 'SSL Cipher Suites' add at least one of the following items to comma-separated list:"
+        foreach ($cs in $missingCipherSuitesConsideringOS) { Write-nonOK "        $cs" }
         Write-nonOK "    - Press 'OK' button"
         Write-nonOK "    Restart the computer"
         Write-nonOK ""
 
-        $scriptFile = OutputMitigationToPs1 "regFunctionsDEL" "[microsoft.win32.registry]::LocalMachine.OpenSubKey(""Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"", `$true).DeleteValue(""Functions"")"
-        Write-nonOK "MITIGATION 'regFunctionsDEL': deletion of registry item HKLM:\Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002!Functions"
+        $scriptCode = @()
+        $scriptCode += "`$regPath = ""Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"""
+        $scriptCode += @"
+`$value = [microsoft.win32.registry]::GetValue("HKEY_LOCAL_MACHINE\`$regPath", "Functions", `$null)
+if (`$value) {
+    "Deleting..."
+    [microsoft.win32.registry]::LocalMachine.OpenSubKey(`$regPath, `$true).DeleteValue("Functions")
+}
+gpupdate /target:computer /force
+`$value = [microsoft.win32.registry]::GetValue("HKEY_LOCAL_MACHINE\`$regPath", "Functions", `$null)
+if (`$value) { "Mitigation was not effective! Local cipher suite list is being overriden by group policies." }
+else { "Done! Please restart computer." }
+"@
+        $scriptFile = OutputMitigationToPs1 "regFunctionsDEL" $scriptCode $false
+        Write-nonOK "MITIGATION 'regFunctionsDEL': deletion of cipher suite list in registry"
         Write-nonOK "    Mitigation script generated at $scriptFile"
-        Write-nonOK "    Run the mitigation script as Administrator and restart the computer."
+        Write-nonOK "    Run the mitigation script as Administrator:"
+        Write-nonOK "    - If 'Done!' is printed, then operation was successfull."
+        Write-nonOK "    - If 'Mitigation was not effective!' is printed, then ask your domain administrator if cipher suites are enforced via domain GPO."
         Write-nonOK ""
-
-        Write-nonOK "MITIGATION 'GPO': if the above mitigations do not help (or help temporarily) ask your domain administrator if the cipher suites are enforced via domain GPO."
     }
     else
     {
@@ -428,12 +443,6 @@ else
         foreach ($cs in $expectedCipherSuitesConsideringOS) { Write-nonOK "        $cs" }
         Write-nonOK "    - Press 'OK' button"
         Write-nonOK "    Restart the computer"
-        Write-nonOK ""
-
-        $scriptFile = OutputMitigationToPs1 "regFunctionsSET" "[microsoft.win32.registry]::SetValue(""HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"", ""Functions"",""$suggestedFunctionsContent"")"
-        Write-nonOK "MITIGATION 'regFunctionsSET' (apply if non of the above helps): setting cipher suite list via registry at HKLM:\Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002!Functions"
-        Write-nonOK "    Mitigation script generated at $scriptFile"
-        Write-nonOK "    Run the mitigation script as Administrator and restart the computer."
         Write-nonOK ""
 
         if ($winBuildVersion.Major -lt 10)
@@ -550,7 +559,7 @@ else
             Write-nonOK ""
 
             $suggestedFunctionsContent = ($expectedCipherSuitesConsideringOS + $allEnabledCipherSuites) -join ','
-        
+
             Write-nonOK "MITIGATION 'gpeditEccSET' (try if 'cmdletEccEnable' doesn't help): edit an override via Local Group Policy setting"
             Write-nonOK "    Run gpedit.msc: "
             Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
