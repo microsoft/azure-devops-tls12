@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-05-27"
+$version = "2022-05-28"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -118,6 +118,63 @@ Write-Host "CLR Version: " $PSversionTable.CLRVersion
 
 Write-Break
 
+Write-Detail "Running Hot Fix check..."
+
+function CheckHotfix {
+    param ($hotfixId)
+    
+    Write-Detail "Checking $hotfixId..."
+    $hotfix = Get-HotFix -Id $hotfixId
+    if ($hotfix)
+    {
+        Write-Detail "Hotfix $hotfixId found: $hotfix"
+        return $true
+    }
+    else
+    {
+        Write-Detail "Hotfix $hotfixId not installed."
+        return $false
+    }
+}
+
+if ($winBuildVersion.Major -ge 10)
+{
+    Write-OK "No hot fixes are necessary for TLS 1.2 support at this OS version."
+}
+elseif ($winBuildVersion -ge [version]"6.3")
+{
+    $hotfixId = "KB2919355"
+    $found = CheckHotfix $hotfixId    
+    if ($found)
+    {
+        Write-OK "Hotfix check passed."
+    }
+    else
+    {
+        Write-nonOK "ISSUE FOUND: $hotfixId missing, see https://docs.microsoft.com/en-us/windows/win32/secauthn/tls-cipher-suites-in-windows-8-1"
+    }
+}
+elseif ($winBuildVersion -ge [version]"6.1")
+{
+    $hotfixId = "KB3140245"
+    $found = CheckHotfix $hotfixId    
+    if ($found)
+    {
+        Write-OK "Hotfix check passed."
+    }
+    else
+    {
+        Write-nonOK "ISSUE FOUND: $hotfixId missing, see https://support.microsoft.com/en-us/topic/update-to-enable-tls-1-1-and-tls-1-2-as-default-secure-protocols-in-winhttp-in-windows-c4bd73d2-31d7-761e-0178-11268bb10392"
+    }
+}
+else
+{
+    Write-Error "This version of OS is not supported by the troubleshooting script (supported: Windows Server 2008 R2+, Windows 7+)"
+}
+
+Write-Break
+
+
 $boolCheck = { param($left, $right) return ([bool]$left -eq [bool]$right) }
 $exactCheck = { param($left, $right) return ($left -eq $right) }
 
@@ -141,7 +198,6 @@ function CheckValueIsExpected
         return $undefinedMeansExpectedValue
     }
 }
-
 
 $tls12ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client"
 
@@ -330,6 +386,7 @@ if (-not $gettlsciphersuiteAnalysisDone)
     Write-Break
 }
 
+
 Write-Detail "Running Group Policy check..."
 
 function GetFunctionsList
@@ -440,13 +497,6 @@ else
         Write-nonOK "    - Press 'OK' button"
         Write-nonOK "    Restart the computer"
         Write-nonOK ""
-
-        if ($winBuildVersion.Major -lt 10)
-        {
-            Write-nonOK "MITIGATION 'updateOS': your OS may lack updates required to add support for the needed cipher suites."
-            Write-nonOK "    - Win 8.1, Win Server 2012 R2: update 2919355 required, see https://docs.microsoft.com/en-us/windows/win32/secauthn/tls-cipher-suites-in-windows-8-1"
-            Write-nonOK "    - Win 7, Win Server 2008 R2 - 2012: see https://support.microsoft.com/en-us/topic/update-to-enable-tls-1-1-and-tls-1-2-as-default-secure-protocols-in-winhttp-in-windows-c4bd73d2-31d7-761e-0178-11268bb10392"
-        }
     }
     else
     {
