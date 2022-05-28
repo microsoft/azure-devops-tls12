@@ -124,7 +124,7 @@ function CheckHotfix {
     param ($hotfixId)
     
     Write-Detail "Checking $hotfixId..."
-    $hotfix = Get-HotFix -Id $hotfixId
+    $hotfix = Get-HotFix | Where-Object { $_.HotFixID -eq $hotfixId } 
     if ($hotfix)
     {
         Write-Detail "Hotfix $hotfixId found: $hotfix"
