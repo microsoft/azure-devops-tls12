@@ -398,7 +398,7 @@ else { "Done! Please restart computer." }
         Write-nonOK "    Mitigation script generated at $scriptFile"
         Write-nonOK "    Run the mitigation script as Administrator:"
         Write-nonOK "    - If 'Done!' is printed, then operation was successfull."
-        Write-nonOK "    - If 'Mitigation was not effective!' is printed, then ask your domain administrator if cipher suites are enforced via domain GPO."
+        Write-nonOK "    - If 'Mitigation was not effective!' is printed, then cipher suites are enforced via domain GPO - talk to your domain administrator."
         Write-nonOK ""
     }
     else
