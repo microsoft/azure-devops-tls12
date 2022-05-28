@@ -356,8 +356,8 @@ function OutputMitigationToPs1
     return $fileName
 }
 
-$gpolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"
-($isDefined, $allowedCipherSuitesListPerGroupPolicy) = GetFunctionsList $gpolicyPath
+$gpolicyPath = "SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"
+($isDefined, $allowedCipherSuitesListPerGroupPolicy) = GetFunctionsList "HKLM:\$gpolicyPath"
 
 if ($isDefined)
 {
@@ -365,9 +365,7 @@ if ($isDefined)
     Write-Detail "Group Policy cipher suites override defined: $allowedCipherSuitesListPerGroupPolicy"
     Write-Detail "Missing cipher suites: $missingCipherSuitesConsideringOS"
 
-    $suggestedFunctionsContent = ($missingCipherSuitesConsideringOS + $allowedCipherSuitesListPerGroupPolicy) -join ','    
-
-    if (($requiredEnabledCipherSuites -eq $null -or $requiredEnabledCipherSuites.Length -eq 0) -and $missingCipherSuitesConsideringOS.Length -gt 0)
+    if ((-not $requiredEnabledCipherSuites) -and $missingCipherSuitesConsideringOS)
     {
         Write-nonOK "MITIGATION 'gpeditREM': via Local Group Policy setting"
         Write-nonOK "    Run gpedit.msc: "
@@ -383,7 +381,7 @@ if ($isDefined)
         Write-nonOK ""
 
         $scriptCode = @()
-        $scriptCode += "`$regPath = ""Software\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"""
+        $scriptCode += "`$regPath = ""$gpolicyPath"""
         $scriptCode += @"
 `$value = [microsoft.win32.registry]::GetValue("HKEY_LOCAL_MACHINE\`$regPath", "Functions", `$null)
 if (`$value) {
@@ -410,7 +408,7 @@ else { "Done! Please restart computer." }
 }
 else
 {
-    if ($requiredEnabledCipherSuites -eq $null -or $requiredEnabledCipherSuites.Length -eq 0)
+    if (-not $requiredEnabledCipherSuites)
     {
         Write-Detail "No Group Policy cipher suites override defined and cipher suites required by Azure DevOps are not enabled." 
         
@@ -431,8 +429,6 @@ else
             Write-nonOK ""
         }
 
-        $suggestedFunctionsContent = ($expectedCipherSuitesConsideringOS + $allEnabledCipherSuites) -join ','
-        
         Write-nonOK "MITIGATION 'gpeditSET' (apply if the 'cmdletEnable' doesn't help or not applicable): create an override via Local Group Policy setting"
         Write-nonOK "    Run gpedit.msc: "
         Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
@@ -557,8 +553,6 @@ else
             Write-nonOK "    - If any printed line is 'Enabled!' then this mitigation was effective."
             Write-nonOK "    - If all the printed lines are 'Not Effective' then continue with applying the mitigation below."
             Write-nonOK ""
-
-            $suggestedFunctionsContent = ($expectedCipherSuitesConsideringOS + $allEnabledCipherSuites) -join ','
 
             Write-nonOK "MITIGATION 'gpeditEccSET' (try if 'cmdletEccEnable' doesn't help): edit an override via Local Group Policy setting"
             Write-nonOK "    Run gpedit.msc: "
