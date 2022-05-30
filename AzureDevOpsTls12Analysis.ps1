@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-05-28"
+$version = "2022-05-30"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -101,6 +101,57 @@ function Probe
 
 Probe "status.dev.azure.com" # This domain requires TLS 1.2 with strong cipher suites.
 
+
+
+#
+# Functions shared by Analysis part of the script
+#
+
+function GetRegSetValueString
+{
+    param ($path, $propName, $value)
+    $path = $path.replace("HKLM:\", "HKEY_LOCAL_MACHINE\")
+    return "[microsoft.win32.registry]::SetValue(""$path"", ""$propName"", $value)"
+}
+
+function OutputMitigationToPs1 
+{
+    param ($mitigationId, $script, $printDone = $true)
+    $fileName = ".\Mitigation-$mitigationId.ps1"
+    $cmt = "# This PowerShell script was generated as a mitigation by Azure DevOps TLS 1.2 transition readiness checker."
+    $lines = @($cmt) + $script
+    if ($printDone) { $lines += @("'Done!'") }
+    $lines | Out-File -FilePath $fileName -Force
+    return $fileName
+}
+
+
+$boolCheck = { param($left, $right) return ([bool]$left -eq [bool]$right) }
+$exactCheck = { param($left, $right) return ($left -eq $right) }
+
+function CheckRegValueIsExpected
+{
+    param($path, $propertyName, $expectedBoolValue, $undefinedMeansExpectedValue, $predicate)
+    $path = $path.replace("HKEY_LOCAL_MACHINE\", "HKLM:\")
+    if (Test-Path -Path $path)
+    {
+        $value =  Get-ItemProperty -Path $path | Select-Object -ExpandProperty $propertyName -ErrorAction SilentlyContinue
+        if ($value -eq $null) 
+        { 
+            return $undefinedMeansExpectedValue
+        }
+        else 
+        {
+            return $predicate.Invoke($value, $expectedBoolValue)
+        }
+    }
+    else
+    {
+        return $undefinedMeansExpectedValue
+    }
+}
+
+
 # 
 #
 #
@@ -139,7 +190,7 @@ function CheckHotfix {
 
 if ($winBuildVersion.Major -ge 10)
 {
-    Write-OK "No hot fixes are necessary for TLS 1.2 support at this OS version."
+    Write-OK "No hot fixes are necessary for TLS 1.2 support on this OS version."
 }
 elseif ($winBuildVersion -ge [version]"6.3")
 {
@@ -174,39 +225,13 @@ else
 
 Write-Break
 
-
-$boolCheck = { param($left, $right) return ([bool]$left -eq [bool]$right) }
-$exactCheck = { param($left, $right) return ($left -eq $right) }
-
-function CheckValueIsExpected
-{
-    param($path, $propertyName, $expectedBoolValue, $undefinedMeansExpectedValue, $predicate)
-    if (Test-Path -Path $path)
-    {
-        $value =  Get-ItemProperty -Path $path | Select-Object -ExpandProperty $propertyName -ErrorAction SilentlyContinue
-        if ($value -eq $null) 
-        { 
-            return $undefinedMeansExpectedValue
-        }
-        else 
-        {
-            return $predicate.Invoke($value, $expectedBoolValue)
-        }
-    }
-    else
-    {
-        return $undefinedMeansExpectedValue
-    }
-}
-
 $tls12ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client"
-
 $clientCheckOK = $true 
 $mitigations = @()
 
-if (-not (CheckValueIsExpected $tls12ClientPath "Enabled" 1 $true $boolCheck))
+if (-not (CheckRegValueIsExpected $tls12ClientPath "Enabled" 1 $true $boolCheck))
 {
-    $mitigations = $mitigations + "[$tls12ClientPath] 'Enabled'=dword:1"
+    $mitigations += GetRegSetValueString $tls12ClientPath "Enabled" 1
     $clientCheckOK = $false   
 }
 
@@ -218,9 +243,9 @@ if (($winBuildVersion.Major -lt 6) -or ($winBuildVersion.Major -eq 6 -and $winBu
     Write-Detail "For old Windows versions (WS 2012, Windows 7 and older) TLS 1.2 must be explicitly enabled..."
     $undefinedMeansEnabled = $false
 }
-if (-not (CheckValueIsExpected $tls12ClientPath "DisabledByDefault" 0 $undefinedMeansEnabled $boolCheck))
+if (-not (CheckRegValueIsExpected $tls12ClientPath "DisabledByDefault" 0 $undefinedMeansEnabled $boolCheck))
 {
-    $mitigations = $mitigations + "[$tls12ClientPath] 'DisabledByDefault'=dword:0"
+    $mitigations += GetRegSetValueString $tls12ClientPath "DisabledByDefault" 0
     $clientCheckOK = $false
 }
 if ($clientCheckOK)
@@ -229,9 +254,12 @@ if ($clientCheckOK)
 }
 else
 {
-    Write-nonOK "ISSUE FOUND: TLS 1.2 protocol client usage disabled"
-    Write-nonOK "MITIGATION 'regTlsClient': per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs" 
-    $mitigations | & { process { Write-nonOK("    $_") } } 
+    $mitigationName = "RegTlsClientEnable"
+    $scriptFile = OutputMitigationToPs1 $mitigationName $mitigations
+    Write-nonOK "ISSUE FOUND: TLS 1.2 client usage disabled."
+    Write-nonOK "MITIGATION '$mitigationName': per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs"
+    Write-nonOK "    Mitigation script generated at $scriptFile"
+    Write-nonOK "    Run the mitigation script as Administrator and restart the computer."
 }
 Write-Break
 
@@ -402,17 +430,6 @@ function GetFunctionsList
     return ($false, @())
 }
 
-function OutputMitigationToPs1 
-{
-    param ($mitigationId, $script, $printDone = $true)
-    $fileName = ".\Mitigation-$mitigationId.ps1"
-    $cmt = "# This PowerShell script was generated as a mitigation by Azure DevOps TLS 1.2 transition readiness checker."
-    $lines = @($cmt) + $script
-    if ($printDone) { $lines += @("'Done!'") }
-    $lines | Out-File -FilePath $fileName -Force
-    return $fileName
-}
-
 $gpolicyPath = "SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"
 ($isDefined, $allowedCipherSuitesListPerGroupPolicy) = GetFunctionsList "HKLM:\$gpolicyPath"
 
@@ -424,7 +441,8 @@ if ($isDefined)
 
     if ((-not $requiredEnabledCipherSuites) -and $missingCipherSuitesConsideringOS)
     {
-        Write-nonOK "MITIGATION 'gpeditREM': via Local Group Policy setting"
+        $mitigation1Name = "GpeditREM"
+        Write-nonOK "MITIGATION '$mitigation1Name': via Local Group Policy setting"
         Write-nonOK "    Run gpedit.msc: "
         Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
         Write-nonOK "    - Choose setting ""SSL Cipher Suite Order"" -> Edit"
@@ -450,8 +468,9 @@ gpupdate /target:computer /force
 if (`$value) { "Mitigation was not effective! Local cipher suite list is being overriden by group policies." }
 else { "Done! Please restart computer." }
 "@
-        $scriptFile = OutputMitigationToPs1 "regFunctionsDEL" $scriptCode $false
-        Write-nonOK "MITIGATION 'regFunctionsDEL': deletion of cipher suite list in registry"
+        $mitigation2Name = "RegFunctionsDEL"
+        $scriptFile = OutputMitigationToPs1 "$mitigation2Name" $scriptCode $false
+        Write-nonOK "MITIGATION '$mitigation2Name': deletion of cipher suite list in registry"
         Write-nonOK "    Mitigation script generated at $scriptFile"
         Write-nonOK "    Run the mitigation script as Administrator:"
         Write-nonOK "    - If 'Done!' is printed, then operation was successfull."
@@ -469,11 +488,12 @@ else
     {
         Write-Detail "No Group Policy cipher suites override defined and cipher suites required by Azure DevOps are not enabled." 
         
+        $mitigation1Name = "EnableTlsCipherSuite"
         if ($winBuildVersion.Major -ge 10) 
         {
-            $script = $requiredTls12CipherSuites | & { process { "Enable-TlsCipherSuite -Name $_; if (Get-TlsCipherSuite -Name $_) {'Enabled!'} else {'Not effective.'}" } }
-            $scriptFile = OutputMitigationToPs1 "EnableTLS" $script
-            Write-nonOK "MITIGATION 'cmdletEnable': per https://docs.microsoft.com/en-us/powershell/module/tls/enable-tlsciphersuite?view=windowsserver2022-ps"
+            $script = $requiredTls12CipherSuites | & { process { "Enable-TlsCipherSuite -Name $_; if (Get-TlsCipherSuite -Name $_) {'Enabled!'} else {'Not effective.'}" } }            
+            $scriptFile = OutputMitigationToPs1 $mitigation1Name $script
+            Write-nonOK "MITIGATION '$mitigation1Name': per https://docs.microsoft.com/en-us/powershell/module/tls/enable-tlsciphersuite?view=windowsserver2022-ps"
             Write-nonOK "    Mitigation script generated at $scriptFile"
             Write-nonOK "    Run the mitigation script as Administrator:"
             Write-nonOK "    - If any line printed is 'Enabled!' then this mitigation was effective."
@@ -482,11 +502,12 @@ else
         }
         else
         {
-            Write-nonOK "MITIGATION 'cmdletEnable': mitigation omitted (not supported by the OS)"
+            Write-nonOK "MITIGATION '$mitigation1Name': mitigation omitted (not supported by this OS version)"
             Write-nonOK ""
         }
 
-        Write-nonOK "MITIGATION 'gpeditSET' (apply if the 'cmdletEnable' doesn't help or not applicable): create an override via Local Group Policy setting"
+        $mitigation2Name = "GpeditSET"
+        Write-nonOK "MITIGATION '$mitigation2Name' (apply if the '$mitigation1Name' doesn't help or not applicable): create an override via Local Group Policy setting"
         Write-nonOK "    Run gpedit.msc: "
         Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
         Write-nonOK "    - Choose setting ""SSL Cipher Suite Order"" -> Edit"
@@ -513,7 +534,7 @@ function CheckKeyExchangeEnabled
     param ($name, $path, $ciphersuiteSegment, $enabledCipherSuites)
 
     $enabledValue = [System.Convert]::ToUInt32("FFFFFFFF", 16)
-    $isExpected = CheckValueIsExpected $path "Enabled" $enabledValue $true $exactCheck
+    $isExpected = CheckRegValueIsExpected $path "Enabled" $enabledValue $true $exactCheck
     if ($isExpected)
     {
         Write-Detail "$name key exchange allowed."
@@ -533,16 +554,16 @@ function CheckKeyExchangeEnabled
             {    
                 Write-nonOK "ISSUE FOUND: No TLS 1.2 cipher suites required by Azure DevOps remain enabled after applying $name disablement."
 
-                $fmtpath = $path.replace("HKLM:\", "HKEY_LOCAL_MACHINE\")
-                $mitigationCode = @("[microsoft.win32.registry]::SetValue(""$fmtpath"", ""Enabled"", 0xFFFFFFFF)")
+                $mitigationCode =  @()
+                $mitigationCode += GetRegSetValueString $path "Enabled" "0xFFFFFFFF"
 
                 if ($ciphersuiteSegment -eq "DHE")
                 {
                     # https://docs.microsoft.com/en-us/security-updates/securityadvisories/2016/3174644
-                    $mitigationCode += "[microsoft.win32.registry]::SetValue(""$fmtpath"", ""ServerMinKeyBitLength"", 0x00000800)"
+                    $mitigationCode += GetRegSetValueString $path "ServerMinKeyBitLength" 0x00000800
                 }
 
-                $mitigationName = "reg$ciphersuiteSegment"
+                $mitigationName = "Reg$ciphersuiteSegment"
                 $scriptFile = OutputMitigationToPs1 $mitigationName $mitigationCode
                 Write-nonOK "MITIGATION '$mitigationName': enabling of key exchange schema $name in registry."
                 Write-nonOK "    Mitigation script generated at $scriptFile"
@@ -604,7 +625,7 @@ else
             Write-nonOK "    - If all the printed lines are 'Not Effective' then continue with applying the mitigation below."
             Write-nonOK ""
 
-            Write-nonOK "MITIGATION 'gpeditEccSET' (try if 'cmdletEccEnable' doesn't help): edit an override via Local Group Policy setting"
+            Write-nonOK "MITIGATION 'GpeditEccSET' (try if 'cmdletEccEnable' doesn't help): edit an override via Local Group Policy setting"
             Write-nonOK "    Run gpedit.msc: "
             Write-nonOK "    - Navigate to ""Computer Config/Administrative Templates/Network/SSL Config Settings"""
             Write-nonOK "    - Choose setting ""ECC Curve Order"" -> Edit"
@@ -681,12 +702,11 @@ function CheckStrongCrypto
     else
     {
         Write-Warning "Warning: TLS 1.2 not enforced for applications targetting $desc"
-        
-        $fmtpath = $path.replace("HKLM:\", "HKEY_LOCAL_MACHINE\")
-        return @"
-[microsoft.win32.registry]::SetValue("$fmtpath", "SchUseStrongCrypto", 1)
-[microsoft.win32.registry]::SetValue("$fmtpath", "SystemDefaultTlsVersions", 1)
-"@
+        $result = @(
+            (GetRegSetValueString $path "SchUseStrongCrypto" 1),
+            (GetRegSetValueString $path "SystemDefaultTlsVersions" 1)
+        )
+        return $result
     }
 }
 
@@ -698,7 +718,7 @@ $mitigations = $mitigations + (CheckStrongCrypto "HKLM:\SOFTWARE\Wow6432Node\Mic
 $mitigations = $mitigations | Where-Object { $_ -ne $null } 
 if ($mitigations.Count -gt 0)
 {
-    $scriptFile = OutputMitigationToPs1 "netFramework" $mitigations
+    $scriptFile = OutputMitigationToPs1 "NetFramework" $mitigations
     
     Write-Info "Follow the below mitigations when the OS analysis is without issues and there are still applications with TLS-connectivity issues on the computer."
     Write-Warning "MITIGATIONS: per https://docs.microsoft.com/en-us/mem/configmgr/core/plan-design/security/enable-tls-1-2-client"    
