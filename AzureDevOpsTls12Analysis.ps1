@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-05-30"
+$version = "2022-06-05"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -22,8 +22,8 @@ function Write-Info { param($str) Write-Host -ForegroundColor yellow $str }
 function Write-Detail { param($str) Write-Host -ForegroundColor gray $str } 
 function Write-Break { Write-Host -ForegroundColor Gray "********************************************************************************" }
 function Write-Title 
-{ 
-    param($str) 
+{
+    param($str)
     Write-Host -ForegroundColor Yellow ("=" * ($str.Length + 4))
     Write-Host -ForegroundColor Yellow "| $str |" 
     Write-Host -ForegroundColor Yellow ("=" * ($str.Length + 4))
@@ -263,24 +263,22 @@ else
 }
 Write-Break
 
-# List of TLS 1.2 cipher suites required by Azure DevOps Services
-$requiredTls12CipherSuites = (
-    "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
-    "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
-    "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384",
-    "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256"
-)
-# This is subset of above list with cipher suites which are known to be supported at WS 2008 R2+ (when patched properly)
-$minimallySupportedTls12CipherSuites = (
-    "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384",
-    "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256"
-)
+# List of TLS 1.2 cipher suites honoured by Azure DevOps Services.
+# In this hash map for each cipher suite we have lowest Windows OS build version which supports it (when properly patched).
+$serverHonouredTls12CipherSuites = @{
+    "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384" = [version]"10.0";
+    "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" = [version]"10.0";
+    "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384" =   [version]"10.0";
+    "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256" =   [version]"6.1" 
+}
+# List of ECC curves relevant for ECDHE cipher suites
 $requiredEccs = (
     "NistP256",
     "NistP384"
 )
 
-$expectedCipherSuitesConsideringOS = if ($winBuildVersion.Major -lt 10) { $minimallySupportedTls12CipherSuites } else { $requiredTls12CipherSuites }
+$localOsSupportedServerHonouredTls12CipherSuites = $serverHonouredTls12CipherSuites.Keys | Where-Object { $winBuildVersion -ge $serverHonouredTls12CipherSuites[$_] }
+
 
 function GetAllCipherSuitesByBCryptAPI
 {
@@ -367,7 +365,7 @@ if ($winBuildVersion.Major -ge 10)
         }
     Write-Detail "All enabled TLS 1.2 cipher suites: $tls12EnabledCipherSuites"
 
-    $requiredEnabledCipherSuites = $requiredTls12CipherSuites | Where-Object { $allEnabledCipherSuites -contains $_ }    
+    $requiredEnabledCipherSuites = $localOsSupportedServerHonouredTls12CipherSuites | Where-Object { $allEnabledCipherSuites -contains $_ }
     Write-Detail "Matching cipher suites: $requiredEnabledCipherSuites"
 
     if ($requiredEnabledCipherSuites)
@@ -394,12 +392,12 @@ if (-not $gettlsciphersuiteAnalysisDone)
     Write-Detail "Running Cipher Suite check (BCrypt)..."
     $allEnabledCipherSuites = GetAllCipherSuitesByBCryptAPI
     Write-Detail "All enabled cipher suites: $allEnabledCipherSuites"
-    $requiredEnabledCipherSuites = $requiredTls12CipherSuites | Where-Object { $allEnabledCipherSuites -contains $_ }
-    $unsupportedEnabledCipherSuites = $requiredEnabledCipherSuites | Where-Object { $expectedCipherSuitesConsideringOS -notcontains $_ }
+    $requiredEnabledCipherSuites = $serverHonouredTls12CipherSuites.Keys | Where-Object { $allEnabledCipherSuites -contains $_ }
+    $unsupportedEnabledCipherSuites = $requiredEnabledCipherSuites | Where-Object { $localOsSupportedServerHonouredTls12CipherSuites -notcontains $_ }
     if ($unsupportedEnabledCipherSuites)
     {
         Write-Warning "Warning: Excluding TLS 1.2 cipher suites which are supported by Azure DevOps but not working on this OS version: $unsupportedEnabledCipherSuites"
-        $requiredEnabledCipherSuites = $requiredEnabledCipherSuites | Where-Object { $expectedCipherSuitesConsideringOS -contains $_ }
+        $requiredEnabledCipherSuites = $requiredEnabledCipherSuites | Where-Object { $localOsSupportedServerHonouredTls12CipherSuites -contains $_ }
     }
 
     if ($requiredEnabledCipherSuites)
@@ -435,7 +433,7 @@ $gpolicyPath = "SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010
 
 if ($isDefined)
 {
-    $missingCipherSuitesConsideringOS = $expectedCipherSuitesConsideringOS | Where-Object { -not ($allowedCipherSuitesListPerGroupPolicy -contains $_) }    
+    $missingCipherSuitesConsideringOS = $localOsSupportedServerHonouredTls12CipherSuites | Where-Object { -not ($allowedCipherSuitesListPerGroupPolicy -contains $_) }
     Write-Detail "Group Policy cipher suites override defined: $allowedCipherSuitesListPerGroupPolicy"
     Write-Detail "Missing cipher suites: $missingCipherSuitesConsideringOS"
 
@@ -491,7 +489,7 @@ else
         $mitigation1Name = "EnableTlsCipherSuite"
         if ($winBuildVersion.Major -ge 10) 
         {
-            $script = $requiredTls12CipherSuites | & { process { "Enable-TlsCipherSuite -Name $_; if (Get-TlsCipherSuite -Name $_) {'Enabled!'} else {'Not effective.'}" } }            
+            $script = $localOsSupportedServerHonouredTls12CipherSuites | & { process { "Enable-TlsCipherSuite -Name $_; if (Get-TlsCipherSuite -Name $_) {'Enabled!'} else {'Not effective.'}" } }
             $scriptFile = OutputMitigationToPs1 $mitigation1Name $script
             Write-nonOK "MITIGATION '$mitigation1Name': per https://docs.microsoft.com/en-us/powershell/module/tls/enable-tlsciphersuite?view=windowsserver2022-ps"
             Write-nonOK "    Mitigation script generated at $scriptFile"
@@ -514,7 +512,7 @@ else
         Write-nonOK "    - Set as 'Enabled'"
         Write-nonOK "    - 'SSL Cipher Suites' field pre-populates with comma-separated list of cipher suites."
         Write-nonOK "    - If the list does not contain any of the following cipher suites, then insert at least one of them:"
-        foreach ($cs in $expectedCipherSuitesConsideringOS) { Write-nonOK "        $cs" }
+        foreach ($cs in $localOsSupportedServerHonouredTls12CipherSuites) { Write-nonOK "        $cs" }
         Write-nonOK "    - Press 'OK' button"
         Write-nonOK "    Restart the computer"
         Write-nonOK ""
