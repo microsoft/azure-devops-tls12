@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-06-05"
+$version = "2022-06-16"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -160,12 +160,18 @@ Write-Title "Analysis of TLS 1.2 compatibility: OS"
 #
 #
 
-$winBuildVersion = [System.Environment]::OSVersion.Version
+Write-Detail "Getting environment info..."
+
+$envOsVersion = [System.Environment]::OSVersion.Version # if OS went through update (W8 -> W8.1 -> W10 ...), this may return pre-update version (https://stackoverflow.com/questions/33328739/system-environment-osversion-returns-wrong-version) 
+$winVersionRex = "([0-9]+\.)+[0-9]+"
+$systemInfoVersion = $null
+if ((systeminfo /fo csv | ConvertFrom-Csv | Select-Object -Property "OS Version")."OS Version" -match $winVersionRex) { $systemInfoVersion = [version]$Matches[0] } # systeminfo command is considered obsolete but gives up to date version
+$osVersion = if ($envOsVersion -gt $systemInfoVersion) { $envOsVersion } else { $systemInfoVersion } # Take the highest OS version seen
 
 Write-Host "PS Version:" $PSversionTable.PSVersion
 Write-Host "PS Edition: " $PSversionTable.PSEdition
-Write-Host "Win Build Version: "$winBuildVersion
 Write-Host "CLR Version: " $PSversionTable.CLRVersion
+Write-Host "OS Version: system.environment: $envOsVersion, systeminfo: $systemInfoVersion --> $osVersion"
 
 Write-Break
 
@@ -188,11 +194,11 @@ function CheckHotfix {
     }
 }
 
-if ($winBuildVersion.Major -ge 10)
+if ($osVersion.Major -ge 10)
 {
     Write-OK "No hot fixes are necessary for TLS 1.2 support on this OS version."
 }
-elseif ($winBuildVersion -ge [version]"6.3")
+elseif ($osVersion -ge [version]"6.3")
 {
     $hotfixId = "KB2919355"
     $found = CheckHotfix $hotfixId    
@@ -205,7 +211,7 @@ elseif ($winBuildVersion -ge [version]"6.3")
         Write-nonOK "ISSUE FOUND: $hotfixId missing, see https://docs.microsoft.com/en-us/windows/win32/secauthn/tls-cipher-suites-in-windows-8-1"
     }
 }
-elseif ($winBuildVersion -ge [version]"6.1")
+elseif ($osVersion -ge [version]"6.1")
 {
     $hotfixId = "KB3140245"
     $found = CheckHotfix $hotfixId    
@@ -236,7 +242,7 @@ if (-not (CheckRegValueIsExpected $tls12ClientPath "Enabled" 1 $true $boolCheck)
 }
 
 $undefinedMeansEnabled = $true
-if (($winBuildVersion.Major -lt 6) -or ($winBuildVersion.Major -eq 6 -and $winBuildVersion.Minor -le 2)) 
+if ($osVersion -lt [version]"6.3") 
 { 
     # source: https://support.microsoft.com/en-us/topic/update-to-enable-tls-1-1-and-tls-1-2-as-default-secure-protocols-in-winhttp-in-windows-c4bd73d2-31d7-761e-0178-11268bb10392
     # source: https://support.microsoft.com/en-us/topic/update-to-add-support-for-tls-1-1-and-tls-1-2-in-windows-server-2008-sp2-windows-embedded-posready-2009-and-windows-embedded-standard-2009-b6ab553a-fa8f-3f5e-287c-e752eb3ce5f4
@@ -277,7 +283,7 @@ $requiredEccs = (
     "NistP384"
 )
 
-$localOsSupportedServerHonouredTls12CipherSuites = $serverHonouredTls12CipherSuites.Keys | Where-Object { $winBuildVersion -ge $serverHonouredTls12CipherSuites[$_] }
+$localOsSupportedServerHonouredTls12CipherSuites = $serverHonouredTls12CipherSuites.Keys | Where-Object { $osVersion -ge $serverHonouredTls12CipherSuites[$_] }
 
 
 function GetAllCipherSuitesByBCryptAPI
@@ -351,7 +357,7 @@ function GetAllCipherSuitesByBCryptAPI
 $gettlsciphersuiteAnalysisDone = $false
 $requiredEnabledCipherSuites = @()
 $allEnabledCipherSuites = @()
-if ($winBuildVersion.Major -ge 10) 
+if ($osVersion.Major -ge 10) 
 {
     Write-Detail "Running Cipher Suite check (Get-TlsCipherCuite)..."
 
@@ -487,7 +493,7 @@ else
         Write-Detail "No Group Policy cipher suites override defined and cipher suites required by Azure DevOps are not enabled." 
         
         $mitigation1Name = "EnableTlsCipherSuite"
-        if ($winBuildVersion.Major -ge 10) 
+        if ($osVersion.Major -ge 10) 
         {
             $script = $localOsSupportedServerHonouredTls12CipherSuites | & { process { "Enable-TlsCipherSuite -Name $_; if (Get-TlsCipherSuite -Name $_) {'Enabled!'} else {'Not effective.'}" } }
             $scriptFile = OutputMitigationToPs1 $mitigation1Name $script
@@ -574,7 +580,7 @@ function CheckKeyExchangeEnabled
 
 $keyexchangeFilteredCipherSuites = CheckKeyExchangeEnabled "Diffie-Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\Diffie-Hellman" "DHE" $requiredEnabledCipherSuites
 
-if ($winBuildVersion.Major -ge 10) 
+if ($osVersion.Major -ge 10) 
 { 
     $keyexchangeFilteredCipherSuites = CheckKeyExchangeEnabled "Elliptic-curve Diffie–Hellman" "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\ECDH" "ECDHE" $keyexchangeFilteredCipherSuites
 }
@@ -589,7 +595,7 @@ Write-Break
 
 Write-Detail "Running Elliptic Curve check..."
 
-if ($winBuildVersion.Major -lt 10)
+if ($osVersion.Major -lt 10)
 {
     Write-Detail "Skipping elliptic curve check due to OS version."
 }
