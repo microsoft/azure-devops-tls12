@@ -274,7 +274,7 @@ Write-Break
 $serverHonouredTls12CipherSuites = @{
     "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384" = [version]"10.0";
     "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" = [version]"10.0";
-    "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384" =   [version]"10.0";
+    "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384" =   [version]"6.1";
     "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256" =   [version]"6.1" 
 }
 # List of ECC curves relevant for ECDHE cipher suites
