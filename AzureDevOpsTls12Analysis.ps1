@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-06-16"
+$version = "2022-11-28"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -34,7 +34,7 @@ Write-Detail "Azure DevOps TLS 1.2 transition readiness checker v. $version"
 #
 #
 #
-Write-Title "Probing Azure DevOps sites"
+Write-Title "Probing sites"
 #
 #
 #
@@ -82,26 +82,34 @@ function Probe
 {
     param ($domain, $tlsSetupDesc)
     
-    Write-Info "Probing: $domain"
+    Write-Info "Probing: $domain. $tlsSetupDesc"
     
     ($success, $remoteAddress, $handshakeException) = TryToSecureConnect $domain
     switch ($success)
     {
-        $null { Write-nonOK "Failed to reach the destination. This is connectivity or DNS problem, *not* TLS compatibility issue." }
-        $true { Write-OK "Probe succeeded. Connection negotiated successfully to $remoteAddress" }
+        $null { Write-nonOK "Failed to reach $domain. This is connectivity or DNS problem, *not* TLS compatibility issue." }
+        $true { Write-OK "Probe to $domain succeeded. Connection negotiated successfully to $remoteAddress" }
         $false 
         {
-             Write-nonOK "ISSUE FOUND: This may be TLS compatibility issue!"
-             Write-nonOK  "Probe failed when TLS-negotiating to $remoteAddress. Error: $handshakeException"
+             Write-nonOK "ISSUE FOUND: This may be TLS compatibility issue! Probe failed when TLS-negotiating to $domain on $remoteAddress."
+             Write-nonOK "Error: $handshakeException"
         }
     } 
 
-    Write-Break    
+    return $success
 }
 
-Probe "status.dev.azure.com" # This domain requires TLS 1.2 with strong cipher suites.
+$success = Probe "status.dev.azure.com" "This tests connectivity to Azure DevOps sites." # This domain requires TLS 1.2 with strong cipher suites.
+Write-Break    
 
-
+if ($success -ne $true)
+{
+    Write-Warning "Probing Azure DevOps failed. Probing other Microsoft domains to help narrow down the source of the problem:"
+    
+    $success = Probe "portal.azure.com" "This tests connectivity to TLS 1.2+ site which uses similar TLS configuration to Azure DevOps. If the issue is TLS-specific, you should see the same signature of failure for this site and for Azure DevOps."
+    $success = Probe "github.com" "This tests connectivity to TLS 1.2+ site which uses different TLS configuration than Azure DevOps."
+    Write-Break
+}
 
 #
 # Functions shared by Analysis part of the script
