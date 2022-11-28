@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-11-28-2"
+$version = "2022-11-28-3"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -126,11 +126,11 @@ function OutputMitigationToPs1
 {
     param ($mitigationId, $script, $printDone = $true)
     $fileName = ".\Mitigation-$mitigationId.ps1"
-    $filePathAbsolute = $fileName | Resolve-Path
     $cmt = "# This PowerShell script was generated as a mitigation by Azure DevOps TLS 1.2 transition readiness checker."
     $lines = @($cmt) + $script
     if ($printDone) { $lines += @("'Done!'") }
-    $lines | Out-File -FilePath $filePathAbsolute -Force
+    $lines | Out-File -FilePath $fileName -Force
+    $filePathAbsolute = $fileName | Resolve-Path
     return $filePathAbsolute
 }
 
