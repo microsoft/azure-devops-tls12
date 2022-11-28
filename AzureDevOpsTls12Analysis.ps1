@@ -13,7 +13,7 @@
     Lowest OS version where this script has been tested on: Windows Server 2008 R2.
 #>
 
-$version = "2022-11-28"
+$version = "2022-11-28-2"
 
 function Write-OK { param($str) Write-Host -ForegroundColor green $str } 
 function Write-nonOK { param($str) Write-Host -ForegroundColor red $str } 
@@ -283,7 +283,9 @@ $serverHonouredTls12CipherSuites = @{
     "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384" = [version]"10.0";
     "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" = [version]"10.0";
     "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384" =   [version]"6.1";
-    "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256" =   [version]"6.1" 
+    "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256" =   [version]"6.1";
+    "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384" = [version]"6.1"; # This has been added to the list of honoured cipher suites in November 2022
+    "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256" = [version]"6.1"; # This has been added to the list of honoured cipher suites in November 2022
 }
 # List of ECC curves relevant for ECDHE cipher suites
 $requiredEccs = (
