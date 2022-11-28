@@ -126,11 +126,12 @@ function OutputMitigationToPs1
 {
     param ($mitigationId, $script, $printDone = $true)
     $fileName = ".\Mitigation-$mitigationId.ps1"
+    $filePathAbsolute = $fileName | Resolve-Path
     $cmt = "# This PowerShell script was generated as a mitigation by Azure DevOps TLS 1.2 transition readiness checker."
     $lines = @($cmt) + $script
     if ($printDone) { $lines += @("'Done!'") }
-    $lines | Out-File -FilePath $fileName -Force
-    return $fileName
+    $lines | Out-File -FilePath $filePathAbsolute -Force
+    return $filePathAbsolute
 }
 
 
