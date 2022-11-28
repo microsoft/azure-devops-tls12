@@ -279,6 +279,7 @@ Write-Break
 
 # List of TLS 1.2 cipher suites honoured by Azure DevOps Services.
 # In this hash map for each cipher suite we have lowest Windows OS build version which supports it (when properly patched).
+# source: https://learn.microsoft.com/en-us/windows/win32/secauthn/cipher-suites-in-schannel
 $serverHonouredTls12CipherSuites = @{
     "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384" = [version]"10.0";
     "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" = [version]"10.0";
