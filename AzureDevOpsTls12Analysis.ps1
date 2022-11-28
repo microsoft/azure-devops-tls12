@@ -388,12 +388,12 @@ if ($osVersion.Major -ge 10)
 
     if ($requiredEnabledCipherSuites)
     { 
-        Write-OK "Cipher Suite check passed: at least one of the TLS 1.2 cipher suites supported by Azure DevOps is enabled."
+        Write-OK "Cipher Suite check passed: at least one of TLS 1.2 cipher suites supported by Azure DevOps is enabled."
         $gettlsciphersuiteAnalysisDone = $true
     }
     elseif ($tls12EnabledCipherSuites) 
     {
-        Write-nonOK "ISSUE FOUND: None of the TLS 1.2 cipher suites supported by Azure DevOps are enabled."
+        Write-nonOK "ISSUE FOUND: None of TLS 1.2 cipher suites supported by Azure DevOps are enabled."
         $gettlsciphersuiteAnalysisDone = $true
     }
     else
@@ -507,13 +507,13 @@ else
         $mitigation1Name = "EnableTlsCipherSuite"
         if ($osVersion.Major -ge 10) 
         {
-            $script = $localOsSupportedServerHonouredTls12CipherSuites | & { process { "Enable-TlsCipherSuite -Name $_; if (Get-TlsCipherSuite -Name $_) {'Enabled!'} else {'Not effective.'}" } }
+            $script = $localOsSupportedServerHonouredTls12CipherSuites | & { process { "Enable-TlsCipherSuite -Name $_; if (Get-TlsCipherSuite -Name $_) {'Successfully enabled $_'} else {'Could not enable $_. Try enabling by Group Policies.'}" } }
             $scriptFile = OutputMitigationToPs1 $mitigation1Name $script
             Write-nonOK "MITIGATION '$mitigation1Name': per https://docs.microsoft.com/en-us/powershell/module/tls/enable-tlsciphersuite?view=windowsserver2022-ps"
             Write-nonOK "    Mitigation script generated at $scriptFile"
             Write-nonOK "    Run the mitigation script as Administrator:"
-            Write-nonOK "    - If any line printed is 'Enabled!' then this mitigation was effective."
-            Write-nonOK "    - If all the lines printed are 'Not Effective' then continue with applying further mitigations listed below."
+            Write-nonOK "    - If any line printed is 'Successfully enabled ...' then this mitigation was effective."
+            Write-nonOK "    - If all the lines printed are 'Could not enable ...' then continue with applying further mitigations listed below."
             Write-nonOK ""
         }
         else
