@@ -284,8 +284,8 @@ Write-Break
 $serverHonouredTls12CipherSuites = @{
     "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384" = [version]"10.0";
     "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" = [version]"10.0";
-    #"TLS_DHE_RSA_WITH_AES_256_GCM_SHA384" =   [version]"6.1"; # This cipher has been removed by AFD from the list of honoured cipher suites in January 2023
-    #"TLS_DHE_RSA_WITH_AES_128_GCM_SHA256" =   [version]"6.1"; # This cipher has been removed by AFD from the list of honoured cipher suites in January 2023
+    "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384" =   [version]"6.1";
+    "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256" =   [version]"6.1";
     "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384" = [version]"6.1"; # This has been added to the list of honoured cipher suites in November 2022
     "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256" = [version]"6.1"; # This has been added to the list of honoured cipher suites in November 2022
 }
