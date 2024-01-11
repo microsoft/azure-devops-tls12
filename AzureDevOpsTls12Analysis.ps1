@@ -145,7 +145,7 @@ function CheckRegValueIsExpected
     if (Test-Path -Path $path)
     {
         $value =  Get-ItemProperty -Path $path | Select-Object -ExpandProperty $propertyName -ErrorAction SilentlyContinue
-        if ($value -eq $null) 
+        if ($null -eq $value) 
         { 
             return $undefinedMeansExpectedValue
         }
@@ -217,7 +217,7 @@ elseif ($osVersion -ge [version]"6.3")
     }
     else
     {
-        Write-nonOK "ISSUE FOUND: $hotfixId missing, see https://docs.microsoft.com/en-us/windows/win32/secauthn/tls-cipher-suites-in-windows-8-1"
+        Write-nonOK "ISSUE FOUND: $hotfixId missing, see https://learn.microsoft.com/en-us/windows/win32/secauthn/tls-cipher-suites-in-windows-8-1"
     }
 }
 elseif ($osVersion -ge [version]"6.1")
@@ -272,7 +272,7 @@ else
     $mitigationName = "RegTlsClientEnable"
     $scriptFile = OutputMitigationToPs1 $mitigationName $mitigations
     Write-nonOK "ISSUE FOUND: TLS 1.2 client usage disabled."
-    Write-nonOK "MITIGATION '$mitigationName': per https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs"
+    Write-nonOK "MITIGATION '$mitigationName': per https://learn.microsoft.com/en-us/windows-server/identity/ad-fs/operations/manage-ssl-protocols-in-ad-fs"
     Write-nonOK "    Mitigation script generated at $scriptFile"
     Write-nonOK "    Run the mitigation script as Administrator and restart the computer."
 }
@@ -300,7 +300,7 @@ $localOsSupportedServerHonouredTls12CipherSuites = $serverHonouredTls12CipherSui
 
 function GetAllCipherSuitesByBCryptAPI
 {
-    # source: https://docs.microsoft.com/en-us/windows/win32/api/bcrypt/nf-bcrypt-bcryptenumcontextfunctions
+    # source: https://learn.microsoft.com/en-us/windows/win32/api/bcrypt/nf-bcrypt-bcryptenumcontextfunctions
     try
     {
         $definitionFunc = 
@@ -509,7 +509,7 @@ else
         {
             $script = $localOsSupportedServerHonouredTls12CipherSuites | & { process { "Enable-TlsCipherSuite -Name $_; if (Get-TlsCipherSuite -Name $_) {'Successfully enabled $_'} else {'Could not enable $_. Try enabling by Group Policies.'}" } }
             $scriptFile = OutputMitigationToPs1 $mitigation1Name $script
-            Write-nonOK "MITIGATION '$mitigation1Name': per https://docs.microsoft.com/en-us/powershell/module/tls/enable-tlsciphersuite?view=windowsserver2022-ps"
+            Write-nonOK "MITIGATION '$mitigation1Name': per https://learn.microsoft.com/en-us/powershell/module/tls/enable-tlsciphersuite?view=windowsserver2022-ps"
             Write-nonOK "    Mitigation script generated at $scriptFile"
             Write-nonOK "    Run the mitigation script as Administrator:"
             Write-nonOK "    - If any line printed is 'Successfully enabled ...' then this mitigation was effective."
@@ -575,7 +575,7 @@ function CheckKeyExchangeEnabled
 
                 if ($ciphersuiteSegment -eq "DHE")
                 {
-                    # https://docs.microsoft.com/en-us/security-updates/securityadvisories/2016/3174644
+                    # https://learn.microsoft.com/en-us/security-updates/securityadvisories/2016/3174644
                     $mitigationCode += GetRegSetValueString $path "ServerMinKeyBitLength" 0x00000800
                 }
 
@@ -634,7 +634,7 @@ else
             
             $script = $requiredEccs | & { process { "Enable-TlsEccCurve -Name $_; if (Get-TlsEccCurve -Name $_) {'Enabled!'} else {'Not effective.'}" } }
             $scriptFile = OutputMitigationToPs1 "EccEnable" $script
-            Write-nonOK "MITIGATION 'cmdletEccEnable': https://docs.microsoft.com/de-ch/powershell/module/tls/enable-tlsecccurve"
+            Write-nonOK "MITIGATION 'cmdletEccEnable': https://learn.microsoft.com/en-us/powershell/module/tls/enable-tlsecccurve?view=windowsserver2022-ps"
             Write-nonOK "    Mitigation script generated at $scriptFile"
             Write-nonOK "    Run the mitigation script as Administrator:"
             Write-nonOK "    - If any printed line is 'Enabled!' then this mitigation was effective."
@@ -678,7 +678,7 @@ Write-Title "Analysis of TLS 1.2 compatibility: .NET Framework"
 
 $netFwkVersionPath = "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"
 # Mapping table from the above Release number to .NET version here: 
-# https://docs.microsoft.com/en-us/dotnet/framework/migration-guide/how-to-determine-which-versions-are-installed#detect-net-framework-45-and-later-versions
+# https://learn.microsoft.com/en-us/dotnet/framework/migration-guide/how-to-determine-which-versions-are-installed#detect-net-framework-45-and-later-versions
 if (Test-Path -Path $netFwkVersionPath)
 {
     $fwkRelease = (Get-ItemProperty -Path $netFwkVersionPath).Release
@@ -708,8 +708,8 @@ function CheckStrongCrypto
     param($path, $desc)
     $isStrongCryptoEnforced = 
         (($propertyObject = (CheckRegistryDefined $path)) -and
-        (($propertyObject.SchUseStrongCrypto -ne $null) -and ($propertyObject.SchUseStrongCrypto -ne 0)) -and
-        (($propertyObject.SystemDefaultTlsVersions -ne $null) -and ($propertyObject.SystemDefaultTlsVersions -ne 0)))
+        (($null -ne $propertyObject.SchUseStrongCrypto) -and ($propertyObject.SchUseStrongCrypto -ne 0)) -and
+        (($null -ne $propertyObject.SystemDefaultTlsVersions) -and ($propertyObject.SystemDefaultTlsVersions -ne 0)))
 
     if ($isStrongCryptoEnforced)
     {
@@ -737,7 +737,7 @@ if ($mitigations.Count -gt 0)
     $scriptFile = OutputMitigationToPs1 "NetFramework" $mitigations
     
     Write-Info "Follow the below mitigations when the OS analysis is without issues and there are still applications with TLS-connectivity issues on the computer."
-    Write-Warning "MITIGATIONS: per https://docs.microsoft.com/en-us/mem/configmgr/core/plan-design/security/enable-tls-1-2-client"    
+    Write-Warning "MITIGATIONS: per https://learn.microsoft.com/en-us/mem/configmgr/core/plan-design/security/enable-tls-1-2-client"    
     Write-Warning "    Mitigation script generated at $scriptFile"
     Write-Warning "    Run the mitigation script as Administrator and restart the computer."
 }
